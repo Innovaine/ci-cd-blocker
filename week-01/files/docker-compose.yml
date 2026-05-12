@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  ci-cd-blocker:
+    build: .
+    ports:
+      - '3000:3000'
+    environment:
+      PORT: 3000
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      OVERRIDE_TOKEN: ${OVERRIDE_TOKEN}
+      DEFAULT_STAGING_URL: ${DEFAULT_STAGING_URL}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      DATABASE_PATH: /app/data/blocker.db
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ci-cd-blocker-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  ci-cd-blocker-data:
