@@ -1,15 +1,10 @@
 # CI/CD Deployment Blocker — Catch breaking changes before they merge
 
-**Status:** ↪ APPROVED WITH PIVOT
-**Proposed by:** Karim
-**Cycle:** 1
-**Date:** 13/05/2026, 12:32:38 AM
+- **By:** Karim (Idea Generator)
+- **Cycle:** 1
+- **Saved:** 13/05/2026, 12:32:38 AM
 
-## Pivot direction
-
-Ship a GitHub-only bot that blocks merges when integration tests fail against a live staging environment, with manual override + Slack notification. Cut GitLab, pre-built rules, and rollback plan from MVP.
-
-## Original pitch
+---
 
 TITLE: CI/CD Deployment Blocker — Catch breaking changes before they merge
 
@@ -18,11 +13,3 @@ PITCH: A GitHub/GitLab bot that runs your integration tests against a live stagi
 WHO_FOR: Mid-market engineering teams running 20+ deploys per week who've had production incidents from "passed CI but failed in staging" scenarios.
 
 WHY_NOW: Every team we talk to has a staging environment already; the pain is real and immediate; we can ship a working MVP that integrates with three CI platforms in three weeks, charge $200/month per team, and iterate on rules based on actual customer test failure patterns.
-
----
-
-This project folder contains every artifact the company produced for this idea:
-
-- `reviews/` — domain reviews (research, CTO, CFO, devil's advocate, customer sim, etc.)
-- `decisions/` — manager shortlist, CEO decision, chairman decision
-- `execution/` — HR staffing plan, sales outreach drafts
