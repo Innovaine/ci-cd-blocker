@@ -6,14 +6,20 @@ services:
       - '3000:3000'
     environment:
       PORT: 3000
+      NODE_ENV: production
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
       SLACK_CHANNEL: ${SLACK_CHANNEL:-#deployments}
       STAGING_URL: ${STAGING_URL:-http://localhost:3001}
+      MAIN_BRANCH: ${MAIN_BRANCH:-main}
       DECISIONS_FILE: /tmp/decisions.json
     volumes:
-      - /tmp/decisions.json:/tmp/decisions.json
+      - decisions-store:/tmp
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
       interval: 10s
       timeout: 5s
       retries: 3
+      start_period: 10s
+
+volumes:
+  decisions-store: {}

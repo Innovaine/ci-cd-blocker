@@ -4,25 +4,24 @@ export interface RepoConfig {
   mainBranch: string;
   stagingUrl: string;
   slackChannel: string;
-  autoMergeOnPass?: boolean; // Future: not in MVP
+  autoMergeOnPass?: boolean;
 }
 
-// ASSUMPTION: Repo config is stored in the GitHub repo itself at .innovaine/config.json
-// This keeps config close to the code and versioned with the repo
-// Future: centralized config management
+// ASSUMPTION: In MVP, repo config is hardcoded per repo.
+// Future: fetch from .innovaine/config.json in the target repo
+// or from a centralized config service.
+// For now, environment variables override defaults, keeping bootstrap simple.
 
 export async function loadRepoConfig(owner: string, repo: string): Promise<RepoConfig> {
-  // ASSUMPTION: In MVP, we use a static config per repo
-  // Production: fetch from GitHub raw content API
-  // For now, return a hardcoded config to keep the build moving
-
-  // This is a strawman config shape; real config will come from .innovaine/config.json in the target repo
-  return {
+  const config: RepoConfig = {
     owner,
     repo,
-    mainBranch: 'main',
+    mainBranch: process.env.MAIN_BRANCH || 'main',
     stagingUrl: process.env.STAGING_URL || 'http://localhost:3001',
     slackChannel: process.env.SLACK_CHANNEL || '#deployments',
     autoMergeOnPass: false,
   };
+
+  console.log(`[Config] Loaded config for ${owner}/${repo}: staging=${config.stagingUrl}`);
+  return config;
 }

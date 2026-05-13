@@ -3,11 +3,10 @@ import axios from 'axios';
 export interface SlackNotification {
   channel: string;
   message: string;
-  details?: Record<string, any>;
+  details?: Record<string, string>;
 }
 
 export async function notifySlack(notification: SlackNotification): Promise<void> {
-  // ASSUMPTION: Slack webhook URL is provided via environment variable
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
 
   if (!webhookUrl) {
@@ -16,6 +15,13 @@ export async function notifySlack(notification: SlackNotification): Promise<void
   }
 
   try {
+    const fields = notification.details
+      ? Object.entries(notification.details).map(([key, value]) => ({
+          type: 'mrkdwn',
+          text: `*${key}:*\n${value}`,
+        }))
+      : [];
+
     const payload = {
       channel: notification.channel,
       text: notification.message,
@@ -27,14 +33,11 @@ export async function notifySlack(notification: SlackNotification): Promise<void
             text: notification.message,
           },
         },
-        ...(notification.details
+        ...(fields.length > 0
           ? [
               {
                 type: 'section',
-                fields: Object.entries(notification.details).map(([key, value]) => ({
-                  type: 'mrkdwn',
-                  text: `*${key}:*\n${value}`,
-                })),
+                fields,
               },
             ]
           : []),
@@ -44,7 +47,7 @@ export async function notifySlack(notification: SlackNotification): Promise<void
     await axios.post(webhookUrl, payload, { timeout: 5000 });
     console.log(`[Slack] Notification sent to ${notification.channel}`);
   } catch (error) {
-    console.error('[Slack] Failed to send notification:', error);
+    console.error('[Slack] Failed to send notification:', error instanceof Error ? error.message : String(error));
     // Don't throw; Slack outage shouldn't block the webhook handler
   }
 }

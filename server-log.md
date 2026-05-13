@@ -3994,3 +3994,35 @@ STDOUT:
 no configuration file provided: not found
 ```
 ERROR: command exited 1
+
+## 2026-05-13T01:46:59.770Z — Marcus ran 3 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `5833b3a` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 1, 3260ms)
+```
+# Fresh clone and initial build
+cd ~ && rm -rf ci-cd-blocker 2>/dev/null; git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm ci && npm run build 2>&1 | tail -50
+```
+ERROR: command exited 1
+
+### Command 2 on app as engineer (✗ exit 1, 691ms)
+```
+cd ~/ci-cd-blocker && docker compose build && docker compose up -d && sleep 5 && docker compose logs --tail=30
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 548B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 3 on app as engineer (✗ exit 7, 448ms)
+```
+curl -s http://localhost:3000/health && echo "" && docker compose ps
+```
+ERROR: command exited 7

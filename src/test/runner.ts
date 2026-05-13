@@ -1,66 +1,71 @@
 import axios from 'axios';
 
-export interface TestRunRequest {
-  repoOwner: string;
-  repoName: string;
-  headSha: string;
-  stagingUrl: string;
-}
-
-export interface TestRunResult {
-  success: boolean;
+export interface IntegrationTestResult {
+  passed: boolean;
   failureReason?: string;
-  duration?: number;
+  testsRun: number;
+  testsPassed: number;
+  testsFailed: number;
 }
 
-export async function runIntegrationTests(req: TestRunRequest): Promise<TestRunResult> {
-  // ASSUMPTION: staging environment exposes a /health endpoint and a /test endpoint
-  // /health returns { status: 'ok' } if staging is ready
-  // /test runs integration suite and returns { success: boolean, failureReason?: string, duration: number }
-  // This is a happy-path skeleton; real tests depend on the staging environment shape
-
-  const startTime = Date.now();
+// ASSUMPTION: Staging environment exposes /health and /api/test endpoints
+// /health returns { status: 'ok' }
+// /api/test runs a suite of smoke tests and returns { passed: boolean, failures?: string[] }
+// In production, this would invoke actual test framework (Jest, Mocha, etc.)
+export async function runIntegrationTests(stagingUrl: string): Promise<IntegrationTestResult> {
+  const testResults: IntegrationTestResult = {
+    passed: false,
+    testsRun: 0,
+    testsPassed: 0,
+    testsFailed: 0,
+  };
 
   try {
-    // Check staging health
-    console.log(`[Runner] Checking staging health at ${req.stagingUrl}`);
-    const healthCheck = await axios.get(`${req.stagingUrl}/health`, { timeout: 5000 });
-    if (healthCheck.status !== 200) {
-      return {
-        success: false,
-        failureReason: 'Staging environment not healthy',
-        duration: Date.now() - startTime,
-      };
+    // Step 1: Health check
+    console.log(`[Runner] Health check: ${stagingUrl}/health`);
+    const healthResponse = await axios.get(`${stagingUrl}/health`, { timeout: 5000 });
+
+    if (healthResponse.status !== 200) {
+      testResults.failureReason = `Staging health check returned ${healthResponse.status}`;
+      return testResults;
     }
 
-    // Run tests
-    console.log(`[Runner] Running integration tests against ${req.stagingUrl}`);
-    const testResponse = await axios.post(`${req.stagingUrl}/test`, {
-      headSha: req.headSha,
-      repo: `${req.repoOwner}/${req.repoName}`,
-      timeout: 30000,
-    });
+    console.log(`[Runner] ✅ Staging health check passed`);
 
-    const duration = Date.now() - startTime;
+    // Step 2: Run integration tests
+    console.log(`[Runner] Running tests: ${stagingUrl}/api/test`);
+    const testResponse = await axios.post(`${stagingUrl}/api/test`, {}, { timeout: 30000 });
 
-    if (testResponse.status === 200 && testResponse.data.success) {
-      console.log(`[Runner] Tests passed in ${duration}ms`);
-      return { success: true, duration };
-    } else {
-      console.log(`[Runner] Tests failed: ${testResponse.data.failureReason}`);
-      return {
-        success: false,
-        failureReason: testResponse.data.failureReason || 'Tests failed',
-        duration,
-      };
+    const { passed, failures, testsRun = 1, testsPassed = 0, testsFailed = 0 } = testResponse.data;
+
+    testResults.testsRun = testsRun;
+    testResults.testsPassed = testsPassed;
+    testResults.testsFailed = testsFailed;
+
+    if (!passed) {
+      testResults.passed = false;
+      testResults.failureReason = failures ? failures.join('; ') : 'Tests failed without details';
+      console.log(`[Runner] ❌ Tests failed: ${testResults.failureReason}`);
+      return testResults;
     }
+
+    testResults.passed = true;
+    console.log(`[Runner] ✅ All tests passed (${testsPassed}/${testsRun})`);
+    return testResults;
   } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error(`[Runner] Integration test run error:`, error);
-    return {
-      success: false,
-      failureReason: `Test runner error: ${String(error)}`,
-      duration,
-    };
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNREFUSED') {
+        testResults.failureReason = `Cannot reach staging environment at ${stagingUrl}`;
+      } else if (error.response?.status === 404) {
+        testResults.failureReason = `Test endpoint not found at ${stagingUrl}/api/test`;
+      } else {
+        testResults.failureReason = `Staging request failed: ${error.message}`;
+      }
+    } else {
+      testResults.failureReason = `Test runner error: ${error instanceof Error ? error.message : String(error)}`;
+    }
+
+    console.error(`[Runner] Error: ${testResults.failureReason}`);
+    return testResults;
   }
 }
