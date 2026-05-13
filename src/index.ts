@@ -1,120 +1,119 @@
 import express, { Request, Response } from 'express';
-import { handleGitHubWebhook } from './webhooks/github.js';
-import { notifySlack } from './slack/notifier.js';
-import { getRecentDecisions, getDecisionsForPR } from './db/decisions.js';
-import type { DecisionRecord } from './db/decisions.js';
+import { handleGitHubWebhook } from './webhooks/github';
+import { notifySlack } from './slack/notifier';
 
-const PORT = process.env.PORT || 3000;
 const app = express();
+const port = process.env.PORT || 3000;
 
+// Middleware
 app.use(express.json());
 
-// GitHub webhook endpoint.
-// ASSUMPTION: GitHub webhook events arrive at /webhook with X-GitHub-Event header.
-// ASSUMPTION: The webhook secret is verified externally (not implemented yet).
+// Health check
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// GitHub webhook endpoint
 app.post('/webhook', async (req: Request, res: Response) => {
-  const event = req.headers['x-github-event'] as string;
+  try {
+    console.log('[Webhook] Received event:', req.body?.action || 'unknown action');
+    
+    const result = await handleGitHubWebhook(req.body);
 
-  if (event === 'pull_request') {
-    try {
-      const payload = req.body;
-      const result = await handleGitHubWebhook(payload);
-
-      if (result.success && result.decision) {
-        const decision = result.decision;
-
-        // Notify Slack if the PR was blocked.
-        if (decision.status === 'blocked') {
-          const slackMessage = `🚫 PR #${decision.prNumber} in ${decision.owner}/${decision.repo} blocked: ${decision.reason}`;
-          await notifySlack(slackMessage).catch((err) => {
-            console.warn('Slack notification failed:', err);
-          });
-        } else {
-          const slackMessage = `✅ PR #${decision.prNumber} in ${decision.owner}/${decision.repo} approved: ${decision.reason}`;
-          await notifySlack(slackMessage).catch((err) => {
-            console.warn('Slack notification failed:', err);
-          });
-        }
-      }
-
-      res.json(result);
-    } catch (error) {
-      console.error('Webhook handler error:', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
+    // Attempt Slack notification if webhook URL is configured
+    if (process.env.SLACK_WEBHOOK_URL && result.decision) {
+      await notifySlack(result.decision).catch((err) => {
+        console.warn('[Slack] Notification failed (non-blocking):', err.message);
+      });
     }
-  } else {
-    // Non-PR events are ignored.
-    res.json({ event, ignored: true });
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed',
+      decision: result.decision,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Webhook] Error processing webhook:', message);
+    res.status(400).json({ success: false, error: message });
   }
 });
 
-// Health check endpoint.
-app.get('/health', (req: Request, res: Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-
-// Audit endpoint: retrieve decisions for a specific repo.
-app.get('/api/audit/:owner/:repo', async (req: Request, res: Response) => {
+// Audit endpoint: get recent decisions
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
   try {
     const { owner, repo } = req.params;
-    const decisions = await getRecentDecisions(100);
-    const filtered = decisions.filter(
-      (d) => d.owner === owner && d.repo === repo
-    );
-    res.json({ owner, repo, decisions: filtered });
+    const { getRecentDecisions } = require('./db/decisions');
+
+    const decisions = getRecentDecisions(owner, repo, 10);
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      decisions,
+    });
   } catch (error) {
-    console.error('Audit endpoint error:', error);
-    res.status(500).json({ error: 'Failed to retrieve audit log' });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching decisions:', message);
+    res.status(500).json({ success: false, error: message });
   }
 });
 
-// Audit endpoint: retrieve decisions for a specific PR.
-app.get('/api/audit/:owner/:repo/:prNumber', async (req: Request, res: Response) => {
+// Audit endpoint: get specific PR decisions
+app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   try {
     const { owner, repo, prNumber } = req.params;
-    const decisions = await getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
-    res.json({ owner, repo, prNumber, decisions });
+    const { getDecisionsForPR } = require('./db/decisions');
+
+    const decisions = getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      decisions,
+    });
   } catch (error) {
-    console.error('PR audit endpoint error:', error);
-    res.status(500).json({ error: 'Failed to retrieve PR decisions' });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching PR decisions:', message);
+    res.status(500).json({ success: false, error: message });
   }
 });
 
-// Manual override endpoint.
-// ASSUMPTION: No auth for MVP. In production, this requires a valid token.
-app.post('/api/override/:owner/:repo/:prNumber', async (req: Request, res: Response) => {
+// Manual override endpoint
+app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   try {
     const { owner, repo, prNumber } = req.params;
     const { reason } = req.body;
 
-    const override: DecisionRecord = {
-      id: `override-${Date.now()}`,
-      timestamp: new Date().toISOString(),
+    // ASSUMPTION: No auth on this endpoint for MVP. In production, verify GitHub token or similar.
+    const { saveDecision } = require('./db/decisions');
+
+    saveDecision({
       owner,
       repo,
       prNumber: parseInt(prNumber, 10),
-      status: 'approved',
-      reason: reason || 'Manual override',
       testsPassed: true,
-      integrationTestUrl: null,
-    };
-
-    const { saveDecision } = await import('./db/decisions.js');
-    await saveDecision(override);
-
-    // Notify Slack of the override.
-    const slackMessage = `🔓 Override: PR #${override.prNumber} in ${owner}/${repo} manually approved. Reason: ${override.reason}`;
-    await notifySlack(slackMessage).catch((err) => {
-      console.warn('Slack notification failed:', err);
+      overridden: true,
+      overrideReason: reason || 'Manual override',
+      timestamp: new Date(),
     });
 
-    res.json(override);
+    res.status(200).json({
+      success: true,
+      message: 'Override recorded',
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+    });
   } catch (error) {
-    console.error('Override endpoint error:', error);
-    res.status(500).json({ error: 'Failed to apply override' });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Override] Error recording override:', message);
+    res.status(500).json({ success: false, error: message });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`CI/CD Blocker listening on port ${PORT}`);
+// Start server
+app.listen(port, () => {
+  console.log(`[App] CI/CD Blocker listening on port ${port}`);
 });

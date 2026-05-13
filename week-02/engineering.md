@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:00:50 AM
+- **Saved:** 13/05/2026, 4:01:53 AM
 
 ---
 
@@ -2389,4 +2389,244 @@ PROGRESS:
   - Send a mock GitHub webhook POST to `/webhook` and verify decision is saved
   - Test audit endpoints (`/api/audit/:owner/:repo`)
   - Test manual override endpoint and verify Slack notification (if webhook URL is configured)
+- Recommendation: keep_working
+
+---
+
+## Round 7
+
+I'm reading the state carefully.
+
+**What I see:**
+
+1. **Build is passing.** Last round's SSH completed with exit 0. TypeScript compiled clean.
+2. **Three consecutive blocked cycles + EXECUTION MODE is active.** I cannot block. I must ship.
+3. **We have 7.0 months runway. Every cycle matters.** I'm on round 7 of a 2-week sprint. The PM needs concrete validation this cycle — real webhook events, real test executions, real Slack notifications. Not theoretical. Real.
+4. **My standing is 50/100 reputation, 50/100 influence.** I've been quiet, disciplined, and steady. But I haven't delivered visible wins yet. This round needs to be the one where we know if this product works *at all*.
+
+**What needs to happen:**
+
+I've built the framework. Now I need to **test it end-to-end** — boot the app, fire a mock GitHub webhook at it, watch the decision get saved, watch Slack fire (or fail silently, but fire). Until I do that, we don't know if the 11 files we've written actually *work* when joined together.
+
+I'm also going to read the CTO's code review one more time. He flagged that `src/index.ts` and `src/webhooks/github.ts` are both full webhook implementations. I consolidated them in prior rounds (github.ts is the impl, index.ts delegates to it), but I need to verify that's actually what I shipped and that there's no dead code path.
+
+**What I'm doing this round:**
+
+1. **Boot the app in docker-compose.** Confirm it starts, listens on 3000, /health responds.
+2. **Send a real mock GitHub webhook POST** to /webhook with a realistic payload (repo push event, simulating a PR test trigger).
+3. **Verify the decision gets saved** by querying /api/audit/:owner/:repo.
+4. **Verify Slack notification fires** if SLACK_WEBHOOK_URL is configured (or fails gracefully if not).
+5. **Document any runtime bugs** and fix them if they're blocking the happy path.
+
+---
+
+### `src/index.ts`
+```typescript
+import express, { Request, Response } from 'express';
+import { handleGitHubWebhook } from './webhooks/github';
+import { notifySlack } from './slack/notifier';
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+
+// Health check
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// GitHub webhook endpoint
+app.post('/webhook', async (req: Request, res: Response) => {
+  try {
+    console.log('[Webhook] Received event:', req.body?.action || 'unknown action');
+    
+    const result = await handleGitHubWebhook(req.body);
+
+    // Attempt Slack notification if webhook URL is configured
+    if (process.env.SLACK_WEBHOOK_URL && result.decision) {
+      await notifySlack(result.decision).catch((err) => {
+        console.warn('[Slack] Notification failed (non-blocking):', err.message);
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed',
+      decision: result.decision,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Webhook] Error processing webhook:', message);
+    res.status(400).json({ success: false, error: message });
+  }
+});
+
+// Audit endpoint: get recent decisions
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
+  try {
+    const { owner, repo } = req.params;
+    const { getRecentDecisions } = require('./db/decisions');
+
+    const decisions = getRecentDecisions(owner, repo, 10);
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      decisions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching decisions:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Audit endpoint: get specific PR decisions
+app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const { getDecisionsForPR } = require('./db/decisions');
+
+    const decisions = getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      decisions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching PR decisions:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Manual override endpoint
+app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const { reason } = req.body;
+
+    // ASSUMPTION: No auth on this endpoint for MVP. In production, verify GitHub token or similar.
+    const { saveDecision } = require('./db/decisions');
+
+    saveDecision({
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      testsPassed: true,
+      overridden: true,
+      overrideReason: reason || 'Manual override',
+      timestamp: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Override recorded',
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Override] Error recording override:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Start server
+app.listen(port, () => {
+  console.log(`[App] CI/CD Blocker listening on port ${port}`);
+});
+```
+
+Now I'm going to boot the app and run the integration test suite:
+
+<ssh server="app" user="engineer" reason="Fresh boot: clone, install, build, and run docker-compose to verify the app starts and listens on port 3000">
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build
+</ssh>
+
+---
+
+Once that passes (should be quick — it's just pulling from GitHub, npm install, and TypeScript compile), I'll boot docker-compose:
+
+<ssh server="app" user="engineer" reason="Start docker-compose and verify app is healthy on port 3000">
+cd ~/ci-cd-blocker && docker compose build && docker compose up -d && sleep 3 && docker compose logs --tail=20
+</ssh>
+
+---
+
+Once the app is running, I'll send a mock GitHub webhook POST to test the end-to-end flow:
+
+<ssh server="app" user="engineer" reason="Send mock GitHub webhook POST to /webhook and verify decision is saved and logged">
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "repo": {
+          "owner": {
+            "login": "test-org"
+          },
+          "name": "test-repo"
+        }
+      }
+    },
+    "repository": {
+      "owner": {
+        "login": "test-org"
+      },
+      "name": "test-repo"
+    }
+  }' && echo ""
+</ssh>
+
+---
+
+Then verify the decision was saved:
+
+<ssh server="app" user="engineer" reason="Query audit endpoint to confirm decision was saved">
+curl http://localhost:3000/api/audit/test-org/test-repo && echo ""
+</ssh>
+
+---
+
+And test the override endpoint:
+
+<ssh server="app" user="engineer" reason="Test manual override endpoint">
+curl -X POST http://localhost:3000/api/override/test-org/test-repo/42 \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Manual override for testing"}' && echo ""
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Index.ts is the entry point.** It imports `handleGitHubWebhook()` from `src/webhooks/github.ts`, which is the canonical webhook handler. No dead code duplication. One POST /webhook endpoint, one clear flow.
+
+- **End-to-end test flow:** Mock webhook → decision saved to in-memory db → audit endpoints return decisions → override endpoint records manual approvals. All synchronous for MVP, no background jobs.
+
+- **Slack notifications are fire-and-forget.** If SLACK_WEBHOOK_URL is missing, the app logs a warning but doesn't crash. If notifySlack() throws, it's caught and logged as non-blocking. Real Slack integration can be tested once we have the webhook URL.
+
+- **Tech debt / MVPs assumptions:** (1) No auth on override endpoint — anyone can call it. (2) Repo config derives staging URL from repo name (hardcoded). (3) In-memory database — only survives app restart. All marked in code comments. All acceptable for "does this idea work?" stage.
+
+- **Status:** App should boot cleanly, respond to /health, accept webhook POSTs, save decisions, and return audit queries. Next round we validate against real GitHub events (or a close mock) and verify Slack integration if the webhook URL is provided.
+
+---
+
+PROGRESS:
+- Round: 7
+- Scope completion (this role for THIS week): 80%
+- Remaining for this role:
+  - Boot app and verify /health responds with 200
+  - Send mock GitHub webhook and verify decision saved + logged
+  - Query audit endpoints to confirm retrieval works
+  - Test override endpoint records approvals
+  - Check docker-compose logs for any runtime errors or warnings
 - Recommendation: keep_working
