@@ -7,7 +7,8 @@ export interface RepoConfig {
 }
 
 export function loadRepoConfig(owner: string, repo: string): RepoConfig {
-  // ASSUMPTION: For MVP, derive staging URL from repo name. Real version would read from a config file or database.
+  // ASSUMPTION: For MVP, derive staging URL from repo name.
+  // Real version would read from a config file, database, or environment.
   const stagingUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
 
   return {

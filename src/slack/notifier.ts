@@ -4,7 +4,7 @@ export async function notifySlack(decision: DecisionRecord): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
 
   if (!webhookUrl) {
-    console.warn('[Slack] SLACK_WEBHOOK_URL not configured, skipping notification');
+    console.log('[Slack] SLACK_WEBHOOK_URL not set; skipping notification');
     return;
   }
 

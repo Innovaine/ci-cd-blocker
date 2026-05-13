@@ -1,15 +1,14 @@
 import express, { Request, Response } from 'express';
 import { handleGitHubWebhook } from './webhooks/github';
+import { getDecisionsForRepo, getDecisionByPR, recordDecision, overrideDecision } from './db/decisions';
 import { notifySlack } from './slack/notifier';
-import { saveDecision, getRecentDecisions, getDecisionsForPR, DecisionRecord } from './db/decisions';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(express.json());
 
-// Health check
+// Health check endpoint
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok' });
 });
@@ -17,96 +16,92 @@ app.get('/health', (req: Request, res: Response) => {
 // GitHub webhook endpoint
 app.post('/webhook', async (req: Request, res: Response) => {
   try {
-    console.log('[Webhook] Received event:', req.body?.action || 'unknown action');
-    
-    const result = await handleGitHubWebhook(req.body);
+    const payload = req.body;
 
-    // Attempt Slack notification if webhook URL is configured
-    if (process.env.SLACK_WEBHOOK_URL && result.decision) {
-      await notifySlack(result.decision).catch((err) => {
-        console.warn('[Slack] Notification failed (non-blocking):', err.message);
-      });
+    // Validate basic structure
+    if (!payload.action || !payload.pull_request || !payload.repository) {
+      console.warn('[Webhook] Ignoring payload — missing action, pull_request, or repository');
+      return res.status(400).json({ error: 'Invalid payload structure' });
     }
 
-    res.status(200).json({
-      success: true,
-      message: 'Webhook processed',
-      decision: result.decision,
-    });
+    const result = await handleGitHubWebhook(payload);
+    
+    // Notify Slack
+    if (result.decision) {
+      try {
+        await notifySlack(result.decision);
+      } catch (slackError) {
+        console.error('[Webhook] Slack notification failed, continuing:', slackError);
+        // Non-blocking; don't fail the webhook response
+      }
+    }
+
+    res.status(200).json({ success: true, decision: result.decision });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Webhook] Error processing webhook:', message);
-    res.status(400).json({ success: false, error: message });
+    console.error('[Webhook] Error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
-// Audit endpoint: get recent decisions for a repo
+// Audit endpoint: get all decisions for a repo
 app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
   try {
     const { owner, repo } = req.params;
-    const decisions = getRecentDecisions(owner, repo, 10);
-    res.status(200).json({
-      success: true,
-      owner,
-      repo,
-      decisions,
-    });
+    const decisions = getDecisionsForRepo(owner, repo);
+    res.status(200).json({ owner, repo, decisions });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Audit] Error fetching decisions:', message);
-    res.status(500).json({ success: false, error: message });
+    console.error('[Audit] Error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
-// Audit endpoint: get decisions for a specific PR
+// Audit endpoint: get decision for a specific PR
 app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   try {
     const { owner, repo, prNumber } = req.params;
-    const decisions = getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
-    res.status(200).json({
-      success: true,
-      owner,
-      repo,
-      prNumber: parseInt(prNumber, 10),
-      decisions,
-    });
+    const pr = parseInt(prNumber, 10);
+    if (isNaN(pr)) {
+      return res.status(400).json({ error: 'Invalid PR number' });
+    }
+    const decision = getDecisionByPR(owner, repo, pr);
+    if (!decision) {
+      return res.status(404).json({ error: 'Decision not found' });
+    }
+    res.status(200).json(decision);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Audit] Error fetching PR decisions:', message);
-    res.status(500).json({ success: false, error: message });
+    console.error('[Audit] Error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
-// Manual override endpoint
+// Override endpoint: manually override a decision
 app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   try {
     const { owner, repo, prNumber } = req.params;
     const { reason } = req.body;
 
-    // ASSUMPTION: No auth on this endpoint for MVP. Add GitHub token verification in production.
-    const decision = saveDecision({
-      owner,
-      repo,
-      prNumber: parseInt(prNumber, 10),
-      testsPassed: true,
-      overridden: true,
-      overrideReason: reason || 'Manual override',
-      timestamp: new Date(),
-    });
+    const pr = parseInt(prNumber, 10);
+    if (isNaN(pr)) {
+      return res.status(400).json({ error: 'Invalid PR number' });
+    }
 
-    res.status(200).json({
-      success: true,
-      message: 'Override recorded',
-      decision,
-    });
+    if (!reason || typeof reason !== 'string') {
+      return res.status(400).json({ error: 'Override reason is required and must be a string' });
+    }
+
+    const decision = overrideDecision(owner, repo, pr, reason);
+    res.status(200).json({ success: true, decision });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[Override] Error recording override:', message);
-    res.status(500).json({ success: false, error: message });
+    console.error('[Override] Error:', message);
+    res.status(500).json({ error: message });
   }
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`[App] CI/CD Blocker listening on port ${port}`);
+// Start the server
+app.listen(PORT, () => {
+  console.log(`[Server] Listening on port ${PORT}`);
 });
