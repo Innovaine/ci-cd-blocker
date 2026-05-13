@@ -3627,3 +3627,174 @@ ERROR: command exited 7
 curl -s http://localhost:3000/health 2>&1 && docker compose ps
 ```
 ERROR: command exited 7
+
+## 2026-05-13T01:22:20.240Z — Marcus ran 10 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `ee5e69a` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 2814ms)
+```
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile .dockerignore src/index.ts src/webhooks/github.ts 2>&1 | head -20
+```
+STDOUT:
+```
+Updating 4025248..ee5e69a
+Fast-forward
+ README.md                 |  17 +-
+ server-log.md             | 129 ++++++++++
+ src/config/repo-config.ts |   3 +-
+ src/db/decisions.ts       |  10 +-
+ src/slack/notifier.ts     |   9 +-
+ src/test/orchestrator.ts  |  77 +++---
+ src/test/runner.ts        |  67 +++--
+ src/webhooks/github.ts    | 134 +++++-----
+ week-02/engineering.md    | 628 +++++++++++++++++++++++++++++++++++++++++++++-
+ 9 files changed, 925 insertions(+), 149 deletions(-)
+ls: cannot access 'Dockerfile': No such file or directory
+ls: cannot access '.dockerignore': No such file or directory
+-rw-rw-r-- 1 engineer engineer 2730 May 13 01:20 src/index.ts
+-rw-rw-r-- 1 engineer engineer 3000 May 13 01:22 src/webhooks/github.ts
+```
+
+### Command 2 on app as engineer (✓ exit 0, 908ms)
+```
+cd ~/ci-cd-blocker && rm -rf dist node_modules && npm ci 2>&1 | tail -10
+```
+STDOUT:
+```
+npm error     Include the workspace root when workspaces are enabled for a command.
+npm error
+npm error   --install-links
+npm error     When set file: protocol dependencies will be packed and installed as
+npm error
+npm error
+npm error aliases: clean-install, ic, install-clean, isntall-clean
+npm error
+npm error Run "npm help ci" for more info
+npm error A complete log of this run can be found in: /home/engineer/.npm/_logs/2026-05-13T01_22_15_391Z-debug-0.log
+```
+
+### Command 3 on app as engineer (✗ exit 127, 540ms)
+```
+cd ~/ci-cd-blocker && npm run build 2>&1
+```
+STDOUT:
+```
+
+> ci-cd-blocker@0.1.0 build
+> tsc
+
+sh: 1: tsc: not found
+```
+ERROR: command exited 127
+
+### Command 4 on app as engineer (✓ exit 0, 756ms)
+```
+cd ~/ci-cd-blocker && docker compose down && docker compose build --no-cache 2>&1 | tail -50
+```
+STDOUT:
+```
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 5 on app as engineer (✗ exit 1, 650ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker compose ps
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 6 on app as engineer (✓ exit 0, 502ms)
+```
+docker compose logs app 2>&1 | tail -50
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 7 on app as engineer (✗ exit 7, 585ms)
+```
+curl -v http://localhost:3000/health 2>&1
+```
+STDOUT:
+```
+* Host localhost:3000 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying [::1]:3000...
+* connect to ::1 port 3000 from ::1 port 36158 failed: Connection refused
+*   Trying 127.0.0.1:3000...
+* connect to 127.0.0.1 port 3000 from 127.0.0.1 port 36794 failed: Connection refused
+* Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+* Closing connection
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 8 on app as engineer (✗ exit 7, 461ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 9 on app as engineer (✗ exit 7, 444ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1
+```
+ERROR: command exited 7
+
+### Command 10 on app as engineer (✗ exit 7, 450ms)
+```
+curl -s http://localhost:3000/health 2>&1 && docker compose ps
+```
+ERROR: command exited 7

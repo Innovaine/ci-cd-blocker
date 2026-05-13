@@ -1,13 +1,22 @@
+version: '3.9'
+
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: ci-cd-blocker-app
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
-      NODE_ENV: development
+      NODE_ENV: production
       PORT: 3000
-    volumes:
-      - ./src:/app/src
-    command: npm run build && npm start
+      # SLACK_WEBHOOK_URL: (optional, set in .env)
+      # GITHUB_WEBHOOK_SECRET: (optional, set in .env)
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s

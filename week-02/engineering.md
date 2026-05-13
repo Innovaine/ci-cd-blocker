@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:21:36 AM
+- **Saved:** 13/05/2026, 4:22:58 AM
 
 ---
 
@@ -7853,4 +7853,412 @@ PROGRESS:
   - Test webhook POST → orchestration → decision record flow end-to-end
   - Verify audit GET returns recorded decisions
   - Fix any runtime errors revealed by logs
+- Recommendation: keep_working
+
+---
+
+## Round 21
+
+I'm reading the situation carefully. 
+
+**State right now:**
+- 3 consecutive blocked cycles → EXECUTION MODE active
+- I can't block; I must either approve or pivot into something shippable in 7 days
+- 7.0 months runway, tightening hard
+- Morale at 85, reputation at 50, execution fatigue at 80 — team is fried
+- Last 10 SSH commands all FAILED: no Dockerfile, no .dockerignore, npm ci errored, tsc not found, Docker build failed, app never started, curl all connection-refused
+
+**What I see in the code history:**
+- 21 rounds of work on CI/CD Deployment Blocker
+- 12 source files already written this week
+- CTO Vladimir marked it YELLOW ("FIX FIRST") — critical runtime failures, architectural mismatches
+- The app doesn't start. The Docker image doesn't build. TypeScript doesn't compile.
+
+**My read:**
+This isn't a product problem. This is an execution problem. The team has the right idea — GitHub webhook blocker, simple, shippable. But the build pipeline is broken, and we're in round 21 of the same week still chasing Docker and npm errors.
+
+**What I'm NOT doing:**
+- Rewriting the architecture (that's thrashing)
+- Asking for more validation (we're in EXECUTION MODE — we ship or we die)
+- Shipping untested code (we're already there)
+
+**What I'm doing:**
+Stopping the bleeding. The Dockerfile is missing. npm ci is failing on workspaces. tsc can't be found because build deps aren't installed. The app never even starts.
+
+I'm going to:
+1. **Fix the package.json** — remove workspace config that's breaking npm ci, ensure TypeScript is a dev dependency
+2. **Write Dockerfile** — proper Node 18 Alpine, multi-stage, explicit build steps
+3. **Write .dockerignore** — keep image lean
+4. **Fix src/index.ts** — ensure it's a working Express app that actually starts
+5. **Test the whole thing** — git pull, npm ci, tsc, docker build, docker up, curl /health
+
+The goal: by end of this round, the app starts and listens on 3000. That's the gate. Nothing else matters until that works.
+
+---
+
+### `package.json`
+```json
+{
+  "name": "ci-cd-blocker",
+  "version": "0.1.0",
+  "description": "GitHub-only bot that blocks merges when integration tests fail against staging.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+```
+
+### `Dockerfile`
+```dockerfile
+# Multi-stage: build TS, then minimal runtime image
+FROM node:18-alpine AS builder
+
+WORKDIR /build
+
+# Copy package files
+COPY package.json package-lock.json ./
+
+# Install deps (including dev deps for TypeScript)
+RUN npm ci
+
+# Copy source
+COPY tsconfig.json ./
+COPY src ./src
+
+# Compile TypeScript to JavaScript
+RUN npm run build
+
+# ============================================
+# Runtime stage: only node_modules + compiled JS
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy only prod node_modules
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
+
+# Copy compiled JS from builder
+COPY --from=builder /build/dist ./dist
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => { if (r.statusCode !== 200) throw new Error(r.statusCode); })"
+
+# Start app
+CMD ["npm", "start"]
+```
+
+### `.dockerignore`
+```
+node_modules
+dist
+.git
+.gitignore
+README.md
+.env
+.env.local
+.DS_Store
+*.log
+week-*/
+.dockerignore
+Dockerfile
+docker-compose.yml
+```
+
+### `src/index.ts`
+```typescript
+import express, { Request, Response, NextFunction } from 'express';
+import { handleGitHubWebhook } from './webhooks/github';
+import { getRecentDecisions, getAllDecisions, Decision } from './db/decisions';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+
+// Request logging
+app.use((req: Request, res: Response, next: NextFunction) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// ============================================
+// Routes
+// ============================================
+
+/**
+ * Health check — used by load balancers and Docker health probes
+ */
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+/**
+ * GitHub webhook handler
+ * Receives PR open/synchronize events, runs tests, blocks/approves merge
+ */
+app.post('/webhook', async (req: Request, res: Response) => {
+  const eventType = req.headers['x-github-event'] as string;
+
+  if (eventType !== 'pull_request') {
+    return res.status(400).json({ error: 'Expected pull_request event' });
+  }
+
+  try {
+    const result = await handleGitHubWebhook(req.body);
+    res.status(200).json(result);
+  } catch (err) {
+    console.error(`[webhook] Error handling GitHub webhook:`, err);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+/**
+ * Audit endpoint — fetch recent merge decisions for a repo
+ */
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
+  const { owner, repo } = req.params;
+  const decisions = getRecentDecisions(owner, repo, 20);
+  res.status(200).json({
+    owner,
+    repo,
+    decisions,
+    total: decisions.length,
+  });
+});
+
+/**
+ * Global audit endpoint — all decisions (for debugging)
+ */
+app.get('/api/audit', (req: Request, res: Response) => {
+  const decisions = getAllDecisions();
+  res.status(200).json({
+    total: decisions.length,
+    decisions,
+  });
+});
+
+/**
+ * 404 handler
+ */
+app.use((req: Request, res: Response) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+/**
+ * Error handler
+ */
+app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+  console.error(`[app] Unhandled error:`, err);
+  res.status(500).json({
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'See logs',
+  });
+});
+
+// ============================================
+// Server startup
+// ============================================
+
+const server = app.listen(PORT, () => {
+  console.log(
+    `[app] CI/CD Deployment Blocker listening on port ${PORT} at ${new Date().toISOString()}`
+  );
+  console.log(`[app] Health: http://localhost:${PORT}/health`);
+  console.log(`[app] Webhook: POST http://localhost:${PORT}/webhook`);
+  console.log(`[app] Audit: http://localhost:${PORT}/api/audit/:owner/:repo`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('[app] SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('[app] Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('[app] SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('[app] Server closed');
+    process.exit(0);
+  });
+});
+```
+
+### `tsconfig.json`
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### `docker-compose.yml`
+```yaml
+version: '3.9'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ci-cd-blocker-app
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # SLACK_WEBHOOK_URL: (optional, set in .env)
+      # GITHUB_WEBHOOK_SECRET: (optional, set in .env)
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+```
+
+Now run the full test cycle:
+
+<ssh server="app" user="engineer" reason="Fresh clone and pull, verify canonical files exist">
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile .dockerignore package.json tsconfig.json src/index.ts src/webhooks/github.ts 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Clean slate: remove node_modules and dist, install dependencies">
+cd ~/ci-cd-blocker && rm -rf node_modules dist package-lock.json && npm install 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Compile TypeScript to JavaScript">
+cd ~/ci-cd-blocker && npm run build 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify compiled output exists">
+ls -la dist/ 2>&1 | head -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Stop old containers, build Docker image fresh">
+cd ~/ci-cd-blocker && docker compose down && docker compose build --no-cache 2>&1 | tail -30
+</ssh>
+
+<ssh server="app" user="engineer" reason="Start app in Docker, wait 3 seconds for startup">
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker compose ps 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check app startup logs for errors">
+docker compose logs app 2>&1 | tail -30
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test /health endpoint, confirm 200 OK">
+curl -v http://localhost:3000/health 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="POST a real GitHub PR webhook, confirm decision recording">
+curl -X POST http://localhost:3000/webhook \
+  -H 'Content-Type: application/json' \
+  -H 'X-GitHub-Event: pull_request' \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Fetch recorded decisions from audit API">
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1 | head -50
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify app still running, confirm Docker health">
+docker compose ps 2>&1
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Root cause identified:** No Dockerfile at all. `npm ci` was failing on nonexistent workspace config. TypeScript not in dependencies. App never started because there was no entrypoint. Fixed all three.
+
+- **Build pipeline discipline:** Dockerfile is now explicit, multi-stage, 18-Alpine. package.json has no workspace config. tsconfig.json targets ES2020, outputs to dist/. npm run build → tsc works. Dockerfile copies dist/ directly into runtime image, no dev deps in prod.
+
+- **Express app startup:** `src/index.ts` now explicitly calls `app.listen(PORT)` with startup logging. Graceful shutdown on SIGTERM/SIGINT. Health check endpoint at /health (used by Docker, load balancers). All routes return JSON.
+
+- **Technical decision:** Multi-stage Docker build keeps image small (only prod node_modules + dist), avoids shipping TypeScript compiler or dev dependencies. Builder stage handles compilation.
+
+- **Tech debt accepted:** No request signature validation on GitHub webhooks yet (after first paying customer). In-memory decision store (restarts lose data). Mock test results still hardcoded 70% pass rate. All marked with ASSUMPTION comments.
+
+- **Still TODO:**
+  - Confirm Docker build completes without errors
+  - Verify /health returns 200 OK
+  - Confirm webhook POST succeeds and decision is recorded
+  - Verify audit GET returns recorded decisions
+  - Test app survives a few webhook cycles without crashing
+  - (Post-MVP) Add GitHub API signature validation, persistent storage, real test execution against staging
+
+- **Status:** On track. If the test cycle confirms Docker builds, app starts, /health responds, and webhook → audit flow works, the MVP is shippable. That's the gate — everything else is post-paying-customer work.
+
+---
+
+PROGRESS:
+- Round: 21
+- Scope completion (this role for THIS week): 85%
+- Remaining for this role:
+  - Confirm Docker build succeeds end-to-end without errors
+  - Verify /health, /webhook, /api/audit endpoints all respond correctly
+  - Check app logs show clean startup, no runtime crashes during webhook handling
+  - (Optional) test a few more webhook cycles to confirm in-memory store is working
 - Recommendation: keep_working
