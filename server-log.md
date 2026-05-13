@@ -2306,3 +2306,42 @@ src/webhook-handler.ts(102,36): error TS2339: Property 'notificationChannels' do
 src/webhook-handler.ts(103,15): error TS2554: Expected 2 arguments, but got 1.
 ```
 ERROR: command exited 2
+
+## 2026-05-13T00:56:11.396Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `c32490d` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 4985ms)
+```
+cd ~
+rm -rf ci-cd-blocker
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+```
+STDOUT:
+```
+
+added 99 packages, and audited 100 packages in 1s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.2.0 build
+> tsc
+
+src/webhook-handler.ts(75,58): error TS2554: Expected 2 arguments, but got 3.
+src/webhook-handler.ts(76,65): error TS2339: Property 'testCommand' does not exist on type 'RepoConfig'.
+src/webhook-handler.ts(80,55): error TS2554: Expected 1 arguments, but got 2.
+src/webhook-handler.ts(86,49): error TS2339: Property 'output' does not exist on type 'TestResult'.
+src/webhook-handler.ts(91,33): error TS2554: Expected 1 arguments, but got 4.
+src/webhook-handler.ts(96,32): error TS2339: Property 'exitCode' does not exist on type 'TestResult'.
+src/webhook-handler.ts(97,32): error TS2339: Property 'duration' does not exist on type 'TestResult'.
+src/webhook-handler.ts(101,16): error TS2339: Property 'notificationChannels' does not exist on type 'RepoConfig'.
+src/webhook-handler.ts(101,47): error TS2339: Property 'notificationChannels' does not exist on type 'RepoConfig'.
+src/webhook-handler.ts(102,36): error TS2339: Property 'notificationChannels' does not exist on type 'RepoConfig'.
+src/webhook-handler.ts(103,15): error TS2554: Expected 2 arguments, but got 1.
+```
+ERROR: command exited 2

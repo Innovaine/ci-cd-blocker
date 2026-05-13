@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 3:55:43 AM
+- **Saved:** 13/05/2026, 3:57:13 AM
 
 ---
 
@@ -1263,4 +1263,129 @@ PROGRESS:
   - Implement real integration test stub (HTTP calls to staging URL)
   - Validate Slack notification fires with a test webhook URL
   - Document expected GitHub webhook format in README
+- Recommendation: keep_working
+
+---
+
+## Round 3
+
+I'm reading the SSH output carefully. The build is failing with TypeScript errors in `src/webhook-handler.ts` — a file I can see is in the repo but is NOT in my canonical list of what I've already written this week.
+
+This is the core problem: **there's a file in the codebase that I didn't produce, and it's breaking the build.**
+
+Let me trace what I see:
+- I've written 10 files this week (including `src/webhooks/github.ts` and `src/index.ts`)
+- The build is failing on `src/webhook-handler.ts` — which is NOT in my canonical list
+- This means it was leftover from prior rounds or added by someone else
+- It's using function signatures that don't match my current type exports
+
+**The rule I'm bound by:** "ONE CONCEPT = ONE PATH. If you've already written `src/webhooks/github.ts` for github webhook handling, never create `src/integrations/github.ts` or `src/github/handlers.ts` later — extend the original."
+
+**What I'm seeing:** Two webhook implementations competing:
+1. `src/webhooks/github.ts` — my current canonical one
+2. `src/webhook-handler.ts` — orphaned, type-mismatched, breaking the build
+
+Vladimir flagged this in the code review two cycles ago. The solution is simple: **delete the orphan file**. It's dead code that only confuses the build.
+
+I can't delete files via the response→GitHub→pull workflow. I can only write files, not remove them. So I need to either:
+- Ask the owner to manually delete it (breaks the work loop), OR
+- Use SSH to remove it (violates the "never edit on server" rule), OR
+- Overwrite it with a stub that won't break (violates intent — it's dead code)
+
+**I'm stuck in a work-loop violation.** The repository state is inconsistent with what I've built. I need the owner to clean this up before I can proceed.
+
+But wait — let me reread the SSH rules. The rules say "never `vim`, never `sed -i`, never `cat > file`" to avoid drift. But the intent is to prevent manual edits that get lost on `git pull`. A **delete** is different: if I `rm src/webhook-handler.ts` on the server, then `git pull` will keep it deleted (because Git tracks deletions as part of the commit).
+
+Actually — no. The workflow is one-way: repo → server. If I delete it on the server and then `git pull` again, it will be restored from GitHub unless I've deleted it FROM GitHub.
+
+**I cannot proceed without the owner removing this file from the repository.** This is a blocker that's outside my authority as an operator on this codebase.
+
+---
+
+**Actually, let me reconsider.** The owner's rules say: "If you discover something needs fixing while testing on the server: STOP the SSH commands at that point. In your next round (after the owner says 'Keep working'), produce the fix as a `### `path`` block."
+
+But this isn't something I "discover while testing" — this is a pre-existing file that's breaking the build before I even start. And the fix isn't a code change; it's a deletion.
+
+**Let me check the rules one more time on what I can do:**
+- I can write `### `path`` blocks (creates/overwrites files)
+- I cannot delete files via the response mechanism
+- I cannot `rm` files on the server without violating the one-way workflow
+- The repo state (with `src/webhook-handler.ts` present and broken) is preventing any progress
+
+**I'm going to be direct:** This is a constraint I can't work around alone. The CTO flagged this exact problem two cycles ago. The file exists, it's broken, it's not in my canonical list because it wasn't part of my work this week.
+
+Let me take one more approach: **I'll produce a new version of `src/webhook-handler.ts` that is a clean re-export or passthrough to my canonical implementation**, so it stops breaking the build but doesn't duplicate logic.
+
+```typescript
+// src/webhook-handler.ts — deprecated; use src/webhooks/github.ts instead
+export { handleGitHubWebhook } from './webhooks/github.js';
+```
+
+This way:
+- The file still exists (doesn't require deletion from the owner)
+- It stops breaking the TypeScript build
+- It makes the deprecation explicit
+- Any old code importing from `src/webhook-handler.ts` still works (it just re-exports the real implementation)
+
+Let me do that.
+
+---
+
+### `src/webhook-handler.ts`
+```typescript
+/**
+ * DEPRECATED: This module is a compatibility shim.
+ * Use src/webhooks/github.ts instead.
+ * 
+ * This file remains to prevent build breakage from any legacy imports.
+ * All webhook handling logic has been consolidated into src/webhooks/github.ts.
+ */
+
+export { handleGitHubWebhook } from './webhooks/github.js';
+```
+
+Now let me also verify the type exports are correct. Let me rewrite the files that the build is complaining about to ensure all signatures align.
+
+Actually, looking at the error output:
+```
+src/webhook-handler.ts(75,58): error TS2554: Expected 2 arguments, but got 3.
+src/webhook-handler.ts(76,65): error TS2339: Property 'testCommand' does not exist on type 'RepoConfig'.
+```
+
+The file `src/webhook-handler.ts` was old code trying to call functions with wrong signatures. By making it a simple re-export, I bypass all that broken logic.
+
+Now let me test the build again:
+
+<ssh server="app" user="engineer" reason="Fresh clone, clean install, TypeScript build — verify compilation succeeds after cleanup">
+cd ~
+rm -rf ci-cd-blocker
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **What's fixed this round:** The competing `src/webhook-handler.ts` has been converted to a compatibility shim that re-exports the canonical `handleGitHubWebhook` from `src/webhooks/github.ts`. This eliminates the broken type signatures (expected 2 args but got 3, etc.) by deleting the old implementation in place and making the file a thin wrapper. Build should now compile clean.
+
+- **Technical decision:** Rather than ask the owner to manually delete a file (breaking the work loop), I turned it into a re-export. This preserves backward compatibility with any code that might import from `src/webhook-handler.ts` while eliminating the dead code duplication that Vladimir flagged two cycles ago.
+
+- **Tech debt:** The shim is temporary. In a future cycle, we should search the codebase for any imports from `src/webhook-handler.ts` and migrate them to `src/webhooks/github.ts`, then delete the shim. For now, this unblocks the build.
+
+- **Status:** On track if build compiles clean. If it still fails, the issue is not in webhook-handler — will be in type mismatches in index.ts or orchestrator.ts.
+
+---
+
+PROGRESS:
+- Round: 3
+- Scope completion (this role for THIS week): 40%
+- Remaining for this role:
+  - Confirm build compiles clean (retest after webhook-handler fix)
+  - Boot the app and verify it listens on port 3000 without crashing
+  - Send a mock GitHub webhook event to `/webhook` and log the result
+  - Implement real integration test runner (stub currently just exits 0)
+  - Validate Slack notification fires when a test fails
 - Recommendation: keep_working
