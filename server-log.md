@@ -3095,3 +3095,121 @@ STDOUT:
 curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
 Connection failed
 ```
+
+## 2026-05-13T01:14:28.638Z — Marcus ran 9 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `45d174e` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 5131ms)
+```
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install 2>&1 | tail -5 && npm run build 2>&1 | tail -20
+```
+STDOUT:
+```
+
+17 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.1.0 build
+> tsc
+```
+
+### Command 2 on app as engineer (✓ exit 0, 442ms)
+```
+ls -la ~/ci-cd-blocker/dist/ && echo "---" && wc -l ~/ci-cd-blocker/dist/index.js
+```
+STDOUT:
+```
+total 60
+drwxrwxr-x  7 engineer engineer 4096 May 13 01:14 .
+drwxrwxr-x 11 engineer engineer 4096 May 13 01:14 ..
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:14 config
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:14 db
+-rw-rw-r--  1 engineer engineer   46 May 13 01:14 index.d.ts
+-rw-rw-r--  1 engineer engineer  104 May 13 01:14 index.d.ts.map
+-rw-rw-r--  1 engineer engineer 1753 May 13 01:14 index.js
+-rw-rw-r--  1 engineer engineer 1900 May 13 01:14 index.js.map
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:14 slack
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:14 test
+-rw-rw-r--  1 engineer engineer  200 May 13 01:14 webhook-handler.d.ts
+-rw-rw-r--  1 engineer engineer  245 May 13 01:14 webhook-handler.d.ts.map
+-rw-rw-r--  1 engineer engineer 2576 May 13 01:14 webhook-handler.js
+-rw-rw-r--  1 engineer engineer 2311 May 13 01:14 webhook-handler.js.map
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:14 webhooks
+---
+45 /home/engineer/ci-cd-blocker/dist/index.js
+```
+
+### Command 3 on app as engineer (✓ exit 0, 3696ms)
+```
+cd ~/ci-cd-blocker && timeout 3 node dist/index.js 2>&1 || true
+```
+STDOUT:
+```
+CI/CD Blocker listening on port 3000
+```
+
+### Command 4 on app as engineer (✓ exit 0, 609ms)
+```
+cd ~/ci-cd-blocker && docker compose down 2>/dev/null; docker compose build --no-cache 2>&1 | tail -10
+```
+STDOUT:
+```
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 5 on app as engineer (✗ exit 1, 655ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker ps
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 6 on app as engineer (✓ exit 0, 497ms)
+```
+docker compose logs app 2>&1 | tail -20
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 7 on app as engineer (✓ exit 0, 439ms)
+```
+curl -s http://localhost:3000/health | head -c 200
+```
+
+### Command 8 on app as engineer (✓ exit 0, 470ms)
+```
+curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"action":"opened","pull_request":{"number":42,"head":{"sha":"abc123"},"base":{"repo":{"name":"test-repo","owner":{"login":"testowner"}}}}}' 2>&1 | head -c 400
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to
+```
+
+### Command 9 on app as engineer (✓ exit 0, 460ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo | head -c 300
+```

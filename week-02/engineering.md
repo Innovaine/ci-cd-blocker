@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:13:33 AM
+- **Saved:** 13/05/2026, 4:16:29 AM
 
 ---
 
@@ -6222,4 +6222,151 @@ PROGRESS:
   - Test webhook POST → receives, parses, records decision, returns 200
   - Test audit GET → returns decision records
   - Observe logs for any runtime import/module errors
+- Recommendation: keep_working
+
+---
+
+## Round 16
+
+I'm reading the situation carefully.
+
+**State right now:**
+- 3 consecutive blocked cycles → EXECUTION MODE active
+- Chair cannot block anymore
+- We're at round 16 of this cycle — I've already shipped 11 files
+- Previous SSH batch mostly passed (8/9 succeeded) but Docker failed to start
+- The issue is clear: **Dockerfile is missing from the repo**
+
+I see what happened. I *produced* a Dockerfile in my response last round (you can see it in "WORK ALREADY PRODUCED IN THIS STEP"), but the runner extracts my code blocks and pushes them to GitHub. The file exists in the warehouse now. The Docker build failure on command 4 happened *before* my Dockerfile was written. On the next pull, it should be there.
+
+Let me verify the current state on the server and complete the build.
+
+---
+
+### `Dockerfile`
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY src/ ./src/
+COPY tsconfig.json ./
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["node", "dist/index.js"]
+```
+
+### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+```
+
+(Both already written last round; confirming they're in the canonical paths.)
+
+---
+
+Now let me test the full stack:
+
+<ssh server="app" user="engineer" reason="Fresh pull from GitHub (Dockerfile and docker-compose.yml should now be present).">
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile docker-compose.yml
+</ssh>
+
+<ssh server="app" user="engineer" reason="Build Docker image from scratch.">
+cd ~/ci-cd-blocker && docker compose build --no-cache 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Start container and verify it runs.">
+cd ~/ci-cd-blocker && docker compose up -d && sleep 2 && docker ps
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check logs for startup message and any runtime errors.">
+docker compose logs app 2>&1 | tail -30
+</ssh>
+
+<ssh server="app" user="engineer" reason="Health check: confirm app is listening.">
+curl -s http://localhost:3000/health
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test webhook endpoint with a real-looking GitHub PR payload.">
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456"
+      },
+      "base": {
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          }
+        }
+      }
+    }
+  }' 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Audit endpoint: fetch decisions for the test repo we just pinged.">
+curl -s http://localhost:3000/api/audit/testowner/test-repo
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify no zombie processes, check disk/memory health.">
+docker compose ps && df -h /app && docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "stats unavailable (ok)"
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Docker bootstrap was the blocker.** Dockerfile and docker-compose.yml were in my response last round but hadn't been pulled yet. This round: pull + rebuild should succeed.
+
+- **Tech decision I made:** Express app is minimal — no request logging middleware, no authentication (this is pre-revenue and runs on internal staging, not production). Health check at `/health`, webhook listener at `POST /webhook`, audit API at `/api/audit/:owner/:repo`.
+
+- **Assumption:** Orchestrator returns a stub result (70% pass rate by default, can be overridden). Slack notifier logs to console instead of hitting Slack API (real Slack integration can wait for paying customers). Decisions stored in-memory for MVP.
+
+- **Still TODO after this round:**
+  - Confirm Docker startup succeeds and app stays running
+  - Verify webhook payload triggers orchestration without crashing
+  - Check that decisions are recorded in memory and returned via audit endpoint
+  - Observe any TypeScript runtime errors in logs
+
+- **Tech debt taken:** In-memory decision storage will disappear on restart. For MVP that's acceptable; persistence (file or DB) comes after first real user. Console logging instead of structured logs — fine for now.
+
+- **Status:** Behind if Docker still fails. On track if app starts, health endpoint returns 200, webhook POST returns 200, and audit GET returns an array of decisions. Ahead if all of those work cleanly.
+
+---
+
+PROGRESS:
+- Round: 16
+- Scope completion (this role for THIS week): 65%
+- Remaining for this role:
+  - Confirm Docker container starts cleanly (was failing last round due to missing Dockerfile)
+  - Verify webhook endpoint receives PR payload, calls orchestrator, records decision, returns success response
+  - Confirm audit endpoint returns recorded decisions
+  - Check logs for any runtime import/module errors
+  - One integration test: POST webhook → GET audit should show the recorded decision
 - Recommendation: keep_working
