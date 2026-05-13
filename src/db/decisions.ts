@@ -1,5 +1,4 @@
-// In-memory decision store (lost on restart; MVP only).
-interface DecisionRecord {
+export interface DecisionRecord {
   owner: string;
   repo: string;
   prNumber: number;
@@ -16,7 +15,11 @@ export function recordDecision(decisionId: string, decision: DecisionRecord): vo
   console.log(`[DB] Decision recorded: ${decisionId}`);
 }
 
-export function getDecisionForPR(owner: string, repo: string, prNumber: number): DecisionRecord | undefined {
+export function getDecisionForPR(
+  owner: string,
+  repo: string,
+  prNumber: number
+): DecisionRecord | undefined {
   const decisionId = `${owner}/${repo}#${prNumber}`;
   return store.get(decisionId);
 }

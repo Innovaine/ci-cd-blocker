@@ -1,76 +1,95 @@
-import { RepoConfig } from '../config/repo-config';
+import { Request, Response } from 'express';
+import { RepoConfig, loadRepoConfig } from '../config/repo-config';
 import { orchestrateTests } from '../test/orchestrator';
+import { recordDecision } from '../db/decisions';
+import { notifySlack } from '../slack/notifier';
 
-// GitHub webhook payload shape (simplified for MVP).
-export interface GitHubWebhookPayload {
+export interface WebhookPayload {
   action: string;
-  pull_request: {
+  pull_request?: {
     number: number;
-    head: {
-      repo: {
-        owner: {
-          login: string;
-        };
-        name: string;
+    head?: {
+      repo?: {
+        owner?: { login: string };
+        name?: string;
       };
     };
   };
-  repository: {
-    owner: {
-      login: string;
-    };
-    name: string;
+  repository?: {
+    owner?: { login: string };
+    name?: string;
   };
 }
 
-// Result of webhook processing.
-export interface WebhookHandlerResult {
-  testsPassed: boolean;
-  message: string;
+export interface WebhookResult {
+  received: boolean;
+  decisionId?: string;
+  error?: string;
 }
 
-/**
- * Handle incoming GitHub webhook event.
- * Decides whether to block or allow a PR based on integration test results.
- */
-export async function handleGitHubWebhook(
-  payload: GitHubWebhookPayload,
-  config: RepoConfig
-): Promise<WebhookHandlerResult> {
-  const owner = payload.repository.owner.login;
-  const repo = payload.repository.name;
-  const prNumber = payload.pull_request.number;
+export async function handleGitHubWebhook(req: Request, res: Response): Promise<void> {
+  const payload: WebhookPayload = req.body;
 
-  console.log(`[GitHub] Received webhook for ${owner}/${repo} PR #${prNumber}`);
+  // Extract owner and repo
+  const owner =
+    payload.pull_request?.head?.repo?.owner?.login || payload.repository?.owner?.login;
+  const repo = payload.pull_request?.head?.repo?.name || payload.repository?.name;
+  const prNumber = payload.pull_request?.number;
 
-  // Only process 'opened' and 'synchronize' actions (new PR or push to existing PR).
-  if (payload.action !== 'opened' && payload.action !== 'synchronize') {
-    console.log(`[GitHub] Skipping action "${payload.action}" — only process opened/synchronize`);
-    return {
-      testsPassed: true,
-      message: 'Skipped (action not relevant)',
+  if (!owner || !repo || !prNumber) {
+    const result: WebhookResult = {
+      received: false,
+      error: 'Missing owner, repo, or PR number in payload',
     };
+    res.status(400).json(result);
+    return;
   }
 
+  console.log(
+    `[GitHub] Webhook received for ${owner}/${repo} PR #${prNumber}, action=${payload.action}`
+  );
+
+  // Load repo config
+  const config = loadRepoConfig(owner, repo);
+
+  // Run orchestrator (test execution)
+  let testResult;
   try {
-    // Run integration tests against staging environment.
-    const testResult = await orchestrateTests(config, prNumber);
-
-    console.log(
-      `[GitHub] Tests for ${owner}/${repo} PR #${prNumber}: ${testResult.testsPassed ? 'PASS' : 'FAIL'}`
-    );
-
-    return {
-      testsPassed: testResult.testsPassed,
-      message: testResult.testsPassed ? 'Tests passed' : 'Tests failed',
-    };
+    testResult = await orchestrateTests(config, prNumber);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[GitHub] Error running tests: ${message}`);
-    // ASSUMPTION: On test orchestration failure, default to FAIL (conservative: block the merge).
-    return {
-      testsPassed: false,
-      message: `Test execution error: ${message}`,
+    console.error(`[Orchestrator] Failed for PR #${prNumber}:`, message);
+    const result: WebhookResult = {
+      received: false,
+      error: `Test orchestration failed: ${message}`,
     };
+    res.status(500).json(result);
+    return;
   }
+
+  // Build decision record
+  const decisionId = `${owner}/${repo}#${prNumber}`;
+  const decision = {
+    owner,
+    repo,
+    prNumber,
+    testsPassed: testResult.testsPassed,
+    overridden: false,
+    timestamp: Date.now(),
+  };
+
+  // Record decision
+  recordDecision(decisionId, decision);
+
+  // Notify Slack (fire-and-forget; do not block webhook response)
+  notifySlack(decision).catch((err) => {
+    console.error(`[Slack] Error notifying (non-blocking):`, err);
+  });
+
+  // Return success
+  const result: WebhookResult = {
+    received: true,
+    decisionId,
+  };
+  res.status(200).json(result);
 }

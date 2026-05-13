@@ -1,12 +1,4 @@
-interface DecisionRecord {
-  owner: string;
-  repo: string;
-  prNumber: number;
-  testsPassed: boolean;
-  overridden: boolean;
-  overrideReason?: string;
-  timestamp: number;
-}
+import { DecisionRecord } from '../db/decisions';
 
 export async function notifySlack(decision: DecisionRecord): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;

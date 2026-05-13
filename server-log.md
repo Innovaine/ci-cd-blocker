@@ -2717,3 +2717,98 @@ ERROR: command exited 7
 docker compose logs app --tail=40
 ```
 ERROR: command exited 1
+
+## 2026-05-13T01:09:09.754Z — Marcus ran 7 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `ef96b01` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 5265ms)
+```
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build
+```
+STDOUT:
+```
+
+added 82 packages, and audited 83 packages in 1s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.2.0 build
+> tsc
+
+src/test/runner.ts(6,33): error TS2305: Module '"./orchestrator.js"' has no exported member 'TestContext'.
+src/webhook-handler.ts(8,36): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookPayload'.
+src/webhook-handler.ts(8,57): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookResult'.
+```
+ERROR: command exited 2
+
+### Command 2 on app as engineer (✗ exit 1, 680ms)
+```
+cd ~/ci-cd-blocker && docker compose build && docker compose up -d && sleep 3 && curl -s http://localhost:3000/health && echo ""
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 3 on app as engineer (✗ exit 7, 480ms)
+```
+curl -s -X POST http://localhost:3000/webhook \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "repo": {
+          "owner": {
+            "login": "acme-corp"
+          },
+          "name": "api-service"
+        }
+      }
+    },
+    "repository": {
+      "owner": {
+        "login": "acme-corp"
+      },
+      "name": "api-service"
+    }
+  }' && echo ""
+```
+ERROR: command exited 7
+
+### Command 4 on app as engineer (✗ exit 7, 458ms)
+```
+curl -s http://localhost:3000/api/audit/acme-corp/api-service && echo ""
+```
+ERROR: command exited 7
+
+### Command 5 on app as engineer (✗ exit 7, 455ms)
+```
+curl -s http://localhost:3000/api/audit/acme-corp/api-service/42 && echo ""
+```
+ERROR: command exited 7
+
+### Command 6 on app as engineer (✗ exit 7, 445ms)
+```
+curl -s -X POST http://localhost:3000/api/override/acme-corp/api-service/42 \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"Emergency hotfix, tests deferred"}' && echo ""
+```
+ERROR: command exited 7
+
+### Command 7 on app as engineer (✗ exit 1, 488ms)
+```
+docker compose logs app --tail=50
+```
+ERROR: command exited 1
