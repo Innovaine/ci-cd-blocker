@@ -1,22 +1,19 @@
-version: '3.9'
-
+version: '3.8'
 services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ci-cd-blocker-app
+  ci-cd-blocker:
+    build: .
     ports:
       - '3000:3000'
     environment:
-      NODE_ENV: production
       PORT: 3000
-      # SLACK_WEBHOOK_URL: (optional, set in .env)
-      # GITHUB_WEBHOOK_SECRET: (optional, set in .env)
-    restart: unless-stopped
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      SLACK_CHANNEL: ${SLACK_CHANNEL:-#deployments}
+      STAGING_URL: ${STAGING_URL:-http://localhost:3001}
+      DECISIONS_FILE: /tmp/decisions.json
+    volumes:
+      - /tmp/decisions.json:/tmp/decisions.json
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
-      interval: 30s
-      timeout: 3s
+      interval: 10s
+      timeout: 5s
       retries: 3
-      start_period: 5s

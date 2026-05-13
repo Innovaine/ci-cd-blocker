@@ -3798,3 +3798,199 @@ ERROR: command exited 7
 curl -s http://localhost:3000/health 2>&1 && docker compose ps
 ```
 ERROR: command exited 7
+
+## 2026-05-13T01:23:33.899Z — Marcus ran 11 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `7a10737` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 2847ms)
+```
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile .dockerignore package.json tsconfig.json src/index.ts src/webhooks/github.ts 2>&1
+```
+STDOUT:
+```
+Updating ee5e69a..7a10737
+Fast-forward
+ docker-compose.yml     |  19 ++-
+ package.json           |  14 +-
+ server-log.md          | 171 +++++++++++++++++++++
+ tsconfig.json          |   4 +-
+ week-02/engineering.md | 410 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 5 files changed, 604 insertions(+), 14 deletions(-)
+ls: cannot access 'Dockerfile': No such file or directory
+ls: cannot access '.dockerignore': No such file or directory
+-rw-rw-r-- 1 engineer engineer  563 May 13 01:23 package.json
+-rw-rw-r-- 1 engineer engineer 2730 May 13 01:20 src/index.ts
+-rw-rw-r-- 1 engineer engineer 3000 May 13 01:22 src/webhooks/github.ts
+-rw-rw-r-- 1 engineer engineer  400 May 13 01:23 tsconfig.json
+```
+ERROR: command exited 2
+
+### Command 2 on app as engineer (✓ exit 0, 2244ms)
+```
+cd ~/ci-cd-blocker && rm -rf node_modules dist package-lock.json && npm install 2>&1 | tail -20
+```
+STDOUT:
+```
+
+added 86 packages, and audited 87 packages in 2s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+```
+
+### Command 3 on app as engineer (✗ exit 2, 1270ms)
+```
+cd ~/ci-cd-blocker && npm run build 2>&1
+```
+STDOUT:
+```
+
+> ci-cd-blocker@0.1.0 build
+> tsc
+
+src/webhook-handler.ts(1,10): error TS2305: Module '"./webhooks/github"' has no exported member 'WebhookPayload'.
+src/webhook-handler.ts(1,26): error TS2305: Module '"./webhooks/github"' has no exported member 'WebhookResult'.
+src/webhook-handler.ts(27,5): error TS2322: Type 'RepoConfig | null' is not assignable to type 'RepoConfig'.
+  Type 'null' is not assignable to type 'RepoConfig'.
+src/webhook-handler.ts(34,7): error TS2353: Object literal may only specify known properties, and 'slackChannel' does not exist in type 'RepoConfig'.
+src/webhook-handler.ts(42,49): error TS2345: Argument of type '{ prNumber: any; headSha: any; }' is not assignable to parameter of type 'TestContext'.
+  Type '{ prNumber: any; headSha: any; }' is missing the following properties from type 'TestContext': owner, repo
+src/webhook-handler.ts(50,5): error TS2353: Object literal may only specify known properties, and 'id' does not exist in type 'Decision'.
+src/webhook-handler.ts(54,24): error TS2339: Property 'passed' does not exist on type 'TestResult | { passed: boolean; errors: string[]; }'.
+  Property 'passed' does not exist on type 'TestResult'.
+src/webhook-handler.ts(55,24): error TS2339: Property 'passed' does not exist on type 'TestResult | { passed: boolean; errors: string[]; }'.
+  Property 'passed' does not exist on type 'TestResult'.
+src/webhook-handler.ts(55,78): error TS2339: Property 'errors' does not exist on type 'TestResult | { passed: boolean; errors: string[]; }'.
+  Property 'errors' does not exist on type 'TestResult'.
+src/webhook-handler.ts(63,30): error TS2339: Property 'slackChannel' does not exist on type 'RepoConfig'.
+src/webhook-handler.ts(63,44): error TS2554: Expected 1 arguments, but got 2.
+src/webhook-handler.ts(71,24): error TS2339: Property 'status' does not exist on type 'Decision'.
+```
+ERROR: command exited 2
+
+### Command 4 on app as engineer (✓ exit 0, 486ms)
+```
+ls -la dist/ 2>&1 | head -20
+```
+STDOUT:
+```
+ls: cannot access 'dist/': No such file or directory
+```
+
+### Command 5 on app as engineer (✓ exit 0, 844ms)
+```
+cd ~/ci-cd-blocker && docker compose down && docker compose build --no-cache 2>&1 | tail -30
+```
+STDOUT:
+```
+time="2026-05-13T01:23:30Z" level=warning msg="/home/engineer/ci-cd-blocker/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 6 on app as engineer (✗ exit 1, 716ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker compose ps 2>&1
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 7 on app as engineer (✓ exit 0, 494ms)
+```
+docker compose logs app 2>&1 | tail -30
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 8 on app as engineer (✗ exit 7, 673ms)
+```
+curl -v http://localhost:3000/health 2>&1
+```
+STDOUT:
+```
+* Host localhost:3000 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying [::1]:3000...
+* connect to ::1 port 3000 from ::1 port 49370 failed: Connection refused
+*   Trying 127.0.0.1:3000...
+* connect to 127.0.0.1 port 3000 from 127.0.0.1 port 41832 failed: Connection refused
+* Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+* Closing connection
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 9 on app as engineer (✗ exit 7, 474ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H 'Content-Type: application/json' \
+  -H 'X-GitHub-Event: pull_request' \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 10 on app as engineer (✓ exit 0, 446ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1 | head -50
+```
+
+### Command 11 on app as engineer (✗ exit 1, 505ms)
+```
+docker compose ps 2>&1
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+ERROR: command exited 1

@@ -1,33 +1,50 @@
+import * as fs from 'fs';
+import * as path from 'path';
+
 export interface Decision {
+  prNumber: number;
   owner: string;
   repo: string;
-  prNumber: number;
-  decision: 'blocked' | 'approved' | 'error';
-  reason: string;
+  sha: string;
   timestamp: string;
+  decision: 'approved' | 'blocked';
+  reason: string;
+  testsPassed?: boolean;
 }
 
-// ASSUMPTION: In-memory storage. After first paying customer, move to SQLite or PostgreSQL.
-const decisionStore: Decision[] = [];
+// ASSUMPTION: MVP uses JSON file storage in /tmp/decisions.json
+// This is not production-ready; future versions will use a real database
+// File-based storage keeps the MVP simple and deployable without external deps
+
+const DECISIONS_FILE = process.env.DECISIONS_FILE || '/tmp/decisions.json';
+
+function ensureFile(): void {
+  if (!fs.existsSync(DECISIONS_FILE)) {
+    fs.writeFileSync(DECISIONS_FILE, JSON.stringify([], null, 2));
+  }
+}
+
+export function initializeDatabase(): void {
+  ensureFile();
+  console.log(`[DB] Initialized decisions file at ${DECISIONS_FILE}`);
+}
 
 export function recordDecision(decision: Decision): void {
-  decisionStore.push(decision);
-  console.log(
-    `[decisions] Recorded: ${decision.owner}/${decision.repo}#${decision.prNumber} -> ${decision.decision}`
-  );
+  ensureFile();
+  const decisions: Decision[] = JSON.parse(fs.readFileSync(DECISIONS_FILE, 'utf-8'));
+  decisions.push(decision);
+  fs.writeFileSync(DECISIONS_FILE, JSON.stringify(decisions, null, 2));
+  console.log(`[DB] Recorded decision for PR #${decision.prNumber}`);
 }
 
-export function getRecentDecisions(
-  owner: string,
-  repo: string,
-  limit: number = 10
-): Decision[] {
-  return decisionStore
-    .filter((d) => d.owner === owner && d.repo === repo)
-    .slice(-limit)
-    .reverse();
+export function getDecisionsForPR(owner: string, repo: string, prNumber: number): Decision | null {
+  ensureFile();
+  const decisions: Decision[] = JSON.parse(fs.readFileSync(DECISIONS_FILE, 'utf-8'));
+  return decisions.find((d) => d.owner === owner && d.repo === repo && d.prNumber === prNumber) || null;
 }
 
-export function getAllDecisions(): Decision[] {
-  return [...decisionStore];
+export function getRecentDecisions(limit: number = 10): Decision[] {
+  ensureFile();
+  const decisions: Decision[] = JSON.parse(fs.readFileSync(DECISIONS_FILE, 'utf-8'));
+  return decisions.slice(-limit);
 }

@@ -1,63 +1,48 @@
 import { RepoConfig } from '../config/repo-config';
-import { runTests } from './runner';
+import { runIntegrationTests } from './runner';
 
 export interface TestContext {
   owner: string;
   repo: string;
   prNumber: number;
+  baseSha: string;
   headSha: string;
+  branch: string;
 }
 
 export interface TestResult {
-  success: boolean;
-  reason: string;
-  testsRun?: number;
-  testsPassed?: number;
-  testsFailed?: number;
+  passed: boolean;
+  failureReason?: string;
+  testsDuration?: number;
 }
 
-/**
- * Orchestrate the full integration test flow for a PR.
- * ASSUMPTION: Tests are synchronous. Real impl will add timeout guard, retries.
- */
 export async function orchestrateTests(
   config: RepoConfig,
   context: TestContext
 ): Promise<TestResult> {
+  // ASSUMPTION: orchestrateTests runs integration tests in a staging environment
+  // For MVP, we assume staging is pre-deployed and we just run tests against it
+  // Future: add staging deployment step before tests
+
   console.log(
-    `[orchestrator] Starting for ${context.owner}/${context.repo}#${context.prNumber}`
+    `[Orchestrator] Running tests for ${context.owner}/${context.repo} PR #${context.prNumber}`
   );
 
   try {
-    // Run integration tests against staging
-    const result = await runTests(config, context);
+    const result = await runIntegrationTests({
+      repoOwner: context.owner,
+      repoName: context.repo,
+      headSha: context.headSha,
+      stagingUrl: config.stagingUrl || 'http://localhost:3001', // ASSUMPTION: default staging
+    });
 
-    if (result.success) {
-      console.log(
-        `[orchestrator] ✓ Tests passed for ${context.owner}/${context.repo}#${context.prNumber}`
-      );
-      return {
-        success: true,
-        reason: 'All integration tests passed',
-        testsRun: result.testsRun,
-        testsPassed: result.testsPassed,
-      };
-    } else {
-      console.log(
-        `[orchestrator] ✗ Tests failed for ${context.owner}/${context.repo}#${context.prNumber}`
-      );
-      return {
-        success: false,
-        reason: `Tests failed: ${result.reason}`,
-        testsRun: result.testsRun,
-        testsFailed: result.testsFailed,
-      };
-    }
-  } catch (err) {
-    console.error(`[orchestrator] Error:`, err);
     return {
-      success: false,
-      reason: `Orchestration error: ${err instanceof Error ? err.message : 'Unknown'}`,
+      passed: result.success,
+      failureReason: result.failureReason,
+      testsDuration: result.duration,
     };
+  } catch (error) {
+    console.error(`[Orchestrator] Test runner crashed:`, error);
+    throw new Error(`Test orchestration failed: ${String(error)}`);
   }
 }
