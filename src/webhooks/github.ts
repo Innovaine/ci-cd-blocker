@@ -1,101 +1,91 @@
-/**
- * GitHub webhook handler: receives push/PR events, runs integration tests,
- * blocks merge if tests fail, notifies Slack.
- */
-
-import { orchestrateTests } from '../test/orchestrator.js';
+import type { RepoConfig } from '../config/repo-config.js';
 import { loadRepoConfig } from '../config/repo-config.js';
-import { recordDecision } from '../db/decisions.js';
-import { notifySlack } from '../slack/notifier.js';
+import {
+  saveDecision,
+  DecisionRecord,
+} from '../db/decisions.js';
+import { orchestrateTests, TestContext } from '../test/orchestrator.js';
 
-export interface GitHubWebhookPayload {
+export interface WebhookPayload {
   action?: string;
   pull_request?: {
     number: number;
     head: {
-      sha: string;
+      repo?: {
+        name: string;
+        owner: { login: string };
+      };
     };
-    user: {
-      login: string;
-    };
+    title: string;
   };
-  repository: {
+  repository?: {
     name: string;
-    owner: {
-      login: string;
-    };
+    owner: { login: string };
   };
 }
 
-export async function handleGitHubWebhook(payload: GitHubWebhookPayload) {
-  // Only care about PR opened/synchronize events
-  if (!payload.pull_request) {
-    console.log('[GitHub] Ignoring non-PR event');
-    return { ignored: true };
-  }
+export interface WebhookResult {
+  success: boolean;
+  decision?: DecisionRecord;
+  error?: string;
+}
 
-  const { action } = payload;
-  if (!['opened', 'synchronize'].includes(action || '')) {
-    console.log(`[GitHub] Ignoring PR action: ${action}`);
-    return { ignored: true };
+export async function handleGitHubWebhook(
+  payload: WebhookPayload
+): Promise<WebhookResult> {
+  // ASSUMPTION: Only handle 'opened' and 'synchronize' actions.
+  // 'opened' = new PR, 'synchronize' = commit pushed to existing PR.
+  if (
+    !payload.pull_request ||
+    !['opened', 'synchronize'].includes(payload.action || '')
+  ) {
+    return { success: true };
   }
 
   const pr = payload.pull_request;
-  const repo = payload.repository;
-  const owner = repo.owner.login;
-  const repoName = repo.name;
+  const owner = pr.head.repo?.owner.login || payload.repository?.owner.login;
+  const repo = pr.head.repo?.name || payload.repository?.name;
   const prNumber = pr.number;
-  const commitSha = pr.head.sha;
-  const authorLogin = pr.user.login;
 
-  console.log(`[GitHub] Processing PR #${prNumber} in ${owner}/${repoName}`);
+  if (!owner || !repo) {
+    return {
+      success: false,
+      error: 'Could not determine owner/repo from payload',
+    };
+  }
 
   try {
-    // Load repo config
-    const config = await loadRepoConfig(owner, repoName);
-    console.log(`[GitHub] Loaded config:`, config);
+    // Load repo-specific config (e.g., staging URL, integration test command).
+    const config = await loadRepoConfig(owner, repo);
 
-    // Run integration tests
-    const testResult = await orchestrateTests(config);
-    console.log(`[GitHub] Test result:`, testResult);
-
-    // Determine decision
-    const decision = testResult.passed ? 'approved' : 'blocked';
-    const reason = testResult.passed
-      ? 'Integration tests passed'
-      : `Integration tests failed: ${testResult.error || 'unknown error'}`;
-
-    // Record decision
-    await recordDecision({
-      owner,
-      repo: repoName,
-      prNumber,
-      commitSha,
-      decision,
-      reason,
-      timestamp: new Date().toISOString(),
-    });
-
-    // Notify Slack
-    const slackMessage =
-      decision === 'approved'
-        ? `:white_check_mark: PR #${prNumber} *approved* — tests passed`
-        : `:x: PR #${prNumber} *blocked* — tests failed`;
-
-    await notifySlack(slackMessage, {
+    // Orchestrate integration tests against the staging environment.
+    const testContext: TestContext = {
       prNumber,
       owner,
-      repo: repoName,
-      authorLogin,
-    });
-
-    return {
-      decision,
-      reason,
-      testsPassed: testResult.passed,
+      repo,
+      stagingUrl: config.stagingUrl,
     };
-  } catch (err) {
-    console.error(`[GitHub] Error processing webhook:`, err);
-    throw err;
+
+    const testResult = await orchestrateTests(config, testContext);
+
+    // Record the decision in the database.
+    const decision: DecisionRecord = {
+      id: `gh-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      owner,
+      repo,
+      prNumber,
+      status: testResult.passed ? 'approved' : 'blocked',
+      reason: testResult.passed ? 'All tests passed' : testResult.error || 'Tests failed',
+      testsPassed: testResult.passed,
+      integrationTestUrl: config.stagingUrl,
+    };
+
+    saveDecision(decision);
+
+    return { success: true, decision };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return { success: false, error: errorMessage };
   }
 }

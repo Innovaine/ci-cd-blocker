@@ -1,9 +1,8 @@
 /**
  * DEPRECATED: This module is a compatibility shim.
- * Use src/webhooks/github.ts instead.
- * 
- * This file remains to prevent build breakage from any legacy imports.
  * All webhook handling logic has been consolidated into src/webhooks/github.ts.
+ * 
+ * This file remains to prevent runtime breakage from legacy imports.
  */
 
-export { handleGitHubWebhook } from './webhooks/github.js';
+export { handleGitHubWebhook, type WebhookPayload, type WebhookResult } from './webhooks/github.js';

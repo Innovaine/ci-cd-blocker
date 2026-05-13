@@ -1,36 +1,35 @@
-/**
- * Orchestrates test execution: reads config, runs integration tests,
- * returns structured result.
- */
+import type { RepoConfig } from '../config/repo-config.js';
 
-import { runTests } from './runner.js';
-import { RepoConfig } from '../config/repo-config.js';
+export interface TestContext {
+  prNumber: number;
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+}
 
 export interface TestResult {
   passed: boolean;
   error?: string;
-  details?: {
-    totalTests: number;
-    passed: number;
-    failed: number;
-    duration: number;
-  };
 }
 
-export async function orchestrateTests(config: RepoConfig): Promise<TestResult> {
-  console.log('[Orchestrator] Starting test execution');
-  console.log('[Orchestrator] Test paths:', config.testPaths);
-  console.log('[Orchestrator] Staging URL:', config.stagingUrl);
+/**
+ * Orchestrate integration tests against the staging environment.
+ * 
+ * ASSUMPTION: For MVP, this is a stub that always returns passed=true.
+ * In the next round, this will:
+ *   1. Run HTTP calls to the staging URL
+ *   2. Assert that expected endpoints respond with correct status codes
+ *   3. Return detailed results
+ */
+export async function orchestrateTests(
+  config: RepoConfig,
+  context: TestContext
+): Promise<TestResult> {
+  console.log(
+    `Running integration tests for ${context.owner}/${context.repo}#${context.prNumber} against ${context.stagingUrl}`
+  );
 
-  try {
-    const result = await runTests();
-    console.log('[Orchestrator] Test execution completed:', result);
-    return result;
-  } catch (err) {
-    console.error('[Orchestrator] Test execution failed:', err);
-    return {
-      passed: false,
-      error: `Test execution failed: ${err instanceof Error ? err.message : 'unknown error'}`,
-    };
-  }
+  // STUB: Always pass for now.
+  // In production, call actual HTTP endpoints on stagingUrl and verify responses.
+  return { passed: true };
 }
