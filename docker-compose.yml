@@ -10,6 +10,6 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
-    restart: no
+    restart: unless-stopped
     stdin_open: true
     tty: true

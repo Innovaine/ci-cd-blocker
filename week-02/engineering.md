@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:12:03 AM
+- **Saved:** 13/05/2026, 4:13:33 AM
 
 ---
 
@@ -5834,4 +5834,392 @@ PROGRESS:
   - Test webhook POST: receives decision, returns 200 + JSON
   - Test audit endpoints: return decision records
   - Verify no runtime import or type errors in logs
+- Recommendation: keep_working
+
+---
+
+## Round 15
+
+I'm reading the situation carefully.
+
+**State:**
+- 3 consecutive blocked cycles → EXECUTION MODE active
+- Chair can't block anymore; must approve or pivot
+- 7 months runway, tightening
+- We're in Week 2 of building CI/CD Blocker. Previous round had TypeScript compile errors + Docker startup failures
+- My last round produced 11 files, all appeared syntactically correct on review, but SSH shows TypeScript compilation is still failing and Docker won't start
+
+**What I see in the SSH results:**
+
+1. **Compile errors still present** from the previous round's code:
+   - `src/test/runner.ts(14,57)` — `number` not assignable to `TestContext`
+   - `src/test/runner.ts(16,46)` — `testsPassed` doesn't exist on `TestResult`
+   - `src/webhook-handler.ts(8,36)` — missing exports from `webhooks/github.js`
+
+2. **Docker failed to build or start** — exit 1 on compose build, no container running, compose logs says "no configuration file provided"
+
+3. **But the app DOES run directly** — `node dist/index.js` exits 0 and says "listening on port 3000"
+
+**The problem:** My previous response produced code that I *thought* was correct, but I didn't verify it against the *actual* existing files in the repo. I can't see the full contents of `src/test/runner.ts` or `src/webhook-handler.ts` that were already written. I made assumptions about what they contain and what they import/export, and those assumptions were wrong.
+
+I need to stop, read the actual files from the repo to understand the mismatch, then write the fixes. But I can't read files from the server—I can only pull from GitHub and observe test results.
+
+**What I will do:**
+
+I'm going to look at the compile errors line-by-line and fix the *source of truth* files — the ones I control in this response. The errors tell me:
+
+- `src/test/runner.ts` expects `TestResult` to have a `testsPassed` property, but `src/test/orchestrator.ts` (which I wrote) exports `TestResult` with `passed: boolean` instead
+- `src/webhook-handler.ts` imports `WebhookPayload` and `WebhookResult` from `src/webhooks/github.ts`, but that file (which I wrote) doesn't export those types
+- `src/test/runner.ts` calls something with a `number` where it expects `TestContext`
+
+The fix: I need to align the *interfaces and exports* so that all the imports match. Let me rewrite the files that are causing the mismatch, using the error messages as the source of truth about what the consuming code expects.
+
+### `src/test/orchestrator.ts`
+```typescript
+export interface TestContext {
+  prNumber: number;
+  headSha: string;
+}
+
+export interface TestResult {
+  passed: boolean;
+  testsPassed?: number;
+  testsFailed?: number;
+  errors?: string[];
+}
+
+export async function orchestrateTests(
+  config: any,
+  context: TestContext
+): Promise<TestResult> {
+  // ASSUMPTION: In MVP, tests are a stub. We don't actually run anything.
+  // Return: 70% pass rate (hardcoded) so we can test blocked vs approved paths.
+  console.log(`[orchestrator] Running tests for PR ${context.prNumber} at sha ${context.headSha}`);
+  console.log(`[orchestrator] Staging URL: ${config.stagingUrl}`);
+
+  // Stub: 70% pass
+  const passed = Math.random() > 0.3;
+
+  if (passed) {
+    return { 
+      passed: true,
+      testsPassed: 45,
+      testsFailed: 0
+    };
+  } else {
+    return { 
+      passed: false,
+      testsPassed: 30,
+      testsFailed: 15,
+      errors: ['Integration test suite failed on staging environment'] 
+    };
+  }
+}
+```
+
+### `src/webhooks/github.ts`
+```typescript
+export interface WebhookPayload {
+  action: string;
+  pull_request?: {
+    number: number;
+    head?: {
+      sha: string;
+    };
+    base?: {
+      repo?: {
+        name: string;
+        owner?: {
+          login: string;
+        };
+      };
+    };
+  };
+}
+
+export interface WebhookResult {
+  success: boolean;
+  decision?: {
+    status: 'approved' | 'blocked' | 'approved_override' | 'skipped';
+    reason: string;
+  };
+  error?: string;
+}
+
+export function parseGitHubWebhook(payload: any): WebhookPayload {
+  return payload as WebhookPayload;
+}
+
+export function validateWebhookSignature(signature: string, secret: string, body: string): boolean {
+  // ASSUMPTION: In MVP, no signature validation. Accept all webhooks.
+  console.log(`[github] Webhook received, signature validation skipped`);
+  return true;
+}
+```
+
+### `src/webhook-handler.ts`
+```typescript
+import { WebhookPayload, WebhookResult } from './webhooks/github';
+import { orchestrateTests, TestContext } from './test/orchestrator';
+import { RepoConfig, loadRepoConfig } from './config/repo-config';
+import { recordDecision, Decision } from './db/decisions';
+import { notifySlack } from './slack/notifier';
+
+export async function handleWebhook(payload: WebhookPayload): Promise<WebhookResult> {
+  // Check if this is a PR opened/synchronize event
+  if (!payload.action || !['opened', 'synchronize'].includes(payload.action)) {
+    return { success: true, decision: { status: 'skipped', reason: 'Not a PR open/sync event' } };
+  }
+
+  if (!payload.pull_request) {
+    return { success: false, error: 'No pull_request in payload' };
+  }
+
+  const pr = payload.pull_request;
+  const prNumber = pr.number;
+  const owner = pr.base?.repo?.owner?.login || 'unknown';
+  const repo = pr.base?.repo?.name || 'unknown';
+
+  console.log(`[webhook] Processing ${owner}/${repo}#${prNumber}`);
+
+  // Load repo config (or use defaults)
+  let config: RepoConfig;
+  try {
+    config = loadRepoConfig(owner, repo);
+  } catch {
+    config = {
+      owner,
+      repo,
+      stagingUrl: `https://staging-${owner}-${repo}.example.com`,
+      testCommand: 'npm test',
+      slackChannel: '#ci-blockers',
+      overrideAllowed: true,
+    };
+  }
+
+  // Run integration tests against staging
+  let testResult;
+  try {
+    testResult = await orchestrateTests(config, { prNumber, headSha: pr.head?.sha || 'unknown' });
+  } catch (e) {
+    console.error(`Test orchestration failed for ${owner}/${repo}#${prNumber}`, e);
+    testResult = { passed: false, errors: [String(e)] };
+  }
+
+  // Record decision
+  const decision: Decision = {
+    id: `decision-${Date.now()}`,
+    owner,
+    repo,
+    prNumber,
+    status: testResult.passed ? 'approved' : 'blocked',
+    reason: testResult.passed ? 'Tests passed' : `Tests failed: ${testResult.errors?.join('; ') || 'unknown error'}`,
+    createdAt: new Date().toISOString(),
+  };
+
+  recordDecision(decision);
+
+  // Notify Slack
+  try {
+    await notifySlack(config.slackChannel, decision);
+  } catch (e) {
+    console.warn(`Slack notification failed for ${owner}/${repo}#${prNumber}`, e);
+  }
+
+  return {
+    success: true,
+    decision: {
+      status: decision.status as 'approved' | 'blocked' | 'approved_override' | 'skipped',
+      reason: decision.reason,
+    },
+  };
+}
+```
+
+### `src/test/runner.ts`
+```typescript
+import { orchestrateTests, TestContext, TestResult } from './orchestrator';
+import { RepoConfig } from '../config/repo-config';
+
+export async function runTests(config: RepoConfig, context: TestContext): Promise<TestResult> {
+  console.log(`[runner] Starting test suite for PR ${context.prNumber}`);
+
+  try {
+    const result = await orchestrateTests(config, context);
+
+    console.log(`[runner] Test result: ${result.passed ? 'PASSED' : 'FAILED'}`);
+    console.log(`[runner]   Passed: ${result.testsPassed || 0}`);
+    console.log(`[runner]   Failed: ${result.testsFailed || 0}`);
+
+    if (result.errors && result.errors.length > 0) {
+      console.log(`[runner]   Errors: ${result.errors.join('; ')}`);
+    }
+
+    return result;
+  } catch (e) {
+    console.error(`[runner] Orchestration error:`, e);
+    return {
+      passed: false,
+      errors: [String(e)],
+    };
+  }
+}
+```
+
+### `src/index.ts`
+```typescript
+import express, { Express, Request, Response } from 'express';
+import { handleWebhook } from './webhook-handler';
+import { getDecisions } from './db/decisions';
+
+const app: Express = express();
+const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+
+// Health check
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// GitHub webhook endpoint
+app.post('/webhook', async (req: Request, res: Response) => {
+  try {
+    const payload = req.body;
+    console.log(`[webhook] Received event:`, payload?.action, `PR:`, payload?.pull_request?.number);
+
+    const result = await handleWebhook(payload);
+
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (e) {
+    console.error(`[webhook] Handler error:`, e);
+    res.status(500).json({ success: false, error: String(e) });
+  }
+});
+
+// Audit endpoint: list decisions for a repo
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
+  try {
+    const { owner, repo } = req.params;
+    const decisions = getDecisions(owner, repo);
+    res.json({ owner, repo, decisions, count: decisions.length });
+  } catch (e) {
+    console.error(`[audit] Error fetching decisions for ${req.params.owner}/${req.params.repo}:`, e);
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`CI/CD Blocker listening on port ${PORT}`);
+});
+```
+
+Now, Dockerfile and docker-compose must also be correct. The docker-compose error "no configuration file provided" suggests the compose file is missing or malformed. Let me ensure it's valid:
+
+### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+```
+
+### `Dockerfile`
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY src/ ./src/
+COPY tsconfig.json ./
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["node", "dist/index.js"]
+```
+
+Now test the full build and startup:
+
+<ssh server="app" user="engineer" reason="Clean clone, install, and compile TypeScript. Verify zero errors this time.">
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install 2>&1 | tail -5 && npm run build 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify dist/ was created and contains index.js.">
+ls -la ~/ci-cd-blocker/dist/ && echo "---" && wc -l ~/ci-cd-blocker/dist/index.js
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test app runs directly without Docker (should see 'listening on port 3000').">
+cd ~/ci-cd-blocker && timeout 3 node dist/index.js 2>&1 || true
+</ssh>
+
+<ssh server="app" user="engineer" reason="Docker compose build and start.">
+cd ~/ci-cd-blocker && docker compose down 2>/dev/null; docker compose build --no-cache 2>&1 | tail -10
+</ssh>
+
+<ssh server="app" user="engineer" reason="Start the container.">
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker ps
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check container logs for startup message.">
+docker compose logs app 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Health check: curl /health endpoint.">
+curl -s http://localhost:3000/health | head -c 200
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test webhook POST with fake PR payload.">
+curl -X POST http://localhost:3000/webhook -H "Content-Type: application/json" -d '{"action":"opened","pull_request":{"number":42,"head":{"sha":"abc123"},"base":{"repo":{"name":"test-repo","owner":{"login":"testowner"}}}}}' 2>&1 | head -c 400
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test audit endpoint.">
+curl -s http://localhost:3000/api/audit/testowner/test-repo | head -c 300
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Fixed this round:** All TypeScript interface mismatches. `TestResult` now includes `testsPassed` and `testsFailed` that `runner.ts` expects. `WebhookPayload` and `WebhookResult` exported from `webhooks/github.ts` so `webhook-handler.ts` import succeeds. `TestContext` type matches what orchestrator expects.
+
+- **Tech decision:** Kept express server simple. No extra middleware, no request logging middleware yet (can add later if needed). Health endpoint at `/health`, webhook at `/POST /webhook`, audit queries at `/api/audit/:owner/:repo`.
+
+- **Why previous round failed:** I didn't have visibility into what `src/test/runner.ts` and `src/webhook-handler.ts` were actually importing/expecting. I made guesses on interface shapes. This round: read the error messages as the spec and aligned all exports to match.
+
+- **Assumptions marked:** ASSUMPTION comments in orchestrator (stub tests, 70% pass rate), notifier (no real Slack), repo-config (throw if not found, fall back to defaults in handler).
+
+- **Still TODO:** Verify actual webhook routing works, that decisions persist (in-memory for MVP), that no runtime errors occur on integration test path.
+
+- **Status:** On track if TypeScript now compiles clean and app boots. Behind if we still see compile errors or Docker issues.
+
+---
+
+PROGRESS:
+- Round: 15
+- Scope completion (this role for THIS week): 55%
+- Remaining for this role:
+  - Verify TypeScript compiles with zero errors
+  - Confirm Docker container starts and app listens on 3000
+  - Test webhook POST → receives, parses, records decision, returns 200
+  - Test audit GET → returns decision records
+  - Observe logs for any runtime import/module errors
 - Recommendation: keep_working

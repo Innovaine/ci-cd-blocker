@@ -2980,3 +2980,118 @@ curl -s -X POST http://localhost:3000/api/override/acme-corp/api-service/42 \
   -d '{"reason":"Emergency hotfix, tests deferred"}' && echo ""
 ```
 ERROR: command exited 7
+
+## 2026-05-13T01:12:38.077Z — Marcus ran 7 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `4329228` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 5761ms)
+```
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build 2>&1 | tail -20
+```
+STDOUT:
+```
+
+added 108 packages, and audited 109 packages in 2s
+
+17 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.1.0 build
+> tsc
+
+src/test/runner.ts(14,57): error TS2345: Argument of type 'number' is not assignable to parameter of type 'TestContext'.
+src/test/runner.ts(16,46): error TS2339: Property 'testsPassed' does not exist on type 'TestResult'.
+src/test/runner.ts(17,17): error TS2339: Property 'testsPassed' does not exist on type 'TestResult'.
+src/webhook-handler.ts(8,36): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookPayload'.
+src/webhook-handler.ts(8,57): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookResult'.
+```
+
+### Command 2 on app as engineer (✓ exit 0, 442ms)
+```
+ls -la ~/ci-cd-blocker/dist/ | head -20
+```
+STDOUT:
+```
+total 60
+drwxrwxr-x  7 engineer engineer 4096 May 13 01:12 .
+drwxrwxr-x 11 engineer engineer 4096 May 13 01:12 ..
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:12 config
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:12 db
+-rw-rw-r--  1 engineer engineer   46 May 13 01:12 index.d.ts
+-rw-rw-r--  1 engineer engineer  104 May 13 01:12 index.d.ts.map
+-rw-rw-r--  1 engineer engineer 2719 May 13 01:12 index.js
+-rw-rw-r--  1 engineer engineer 2906 May 13 01:12 index.js.map
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:12 slack
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:12 test
+-rw-rw-r--  1 engineer engineer  360 May 13 01:12 webhook-handler.d.ts
+-rw-rw-r--  1 engineer engineer  211 May 13 01:12 webhook-handler.d.ts.map
+-rw-rw-r--  1 engineer engineer  562 May 13 01:12 webhook-handler.js
+-rw-rw-r--  1 engineer engineer  174 May 13 01:12 webhook-handler.js.map
+drwxrwxr-x  2 engineer engineer 4096 May 13 01:12 webhooks
+```
+
+### Command 3 on app as engineer (✓ exit 0, 5480ms)
+```
+cd ~/ci-cd-blocker && timeout 5 node dist/index.js || echo "App started, timeout expected"
+```
+STDOUT:
+```
+CI/CD Blocker listening on port 3000
+App started, timeout expected
+```
+
+### Command 4 on app as engineer (✗ exit 1, 753ms)
+```
+cd ~/ci-cd-blocker && docker compose down 2>/dev/null; docker compose build --no-cache && docker compose up -d && sleep 2
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 5 on app as engineer (✗ exit 1, 468ms)
+```
+docker ps | grep ci-cd-blocker
+```
+ERROR: command exited 1
+
+### Command 6 on app as engineer (✗ exit 1, 480ms)
+```
+docker compose logs app 2>&1
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+ERROR: command exited 1
+
+### Command 7 on app as engineer (✓ exit 0, 566ms)
+```
+curl -v http://localhost:3000/health 2>&1 || echo "Connection failed"
+```
+STDOUT:
+```
+* Host localhost:3000 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0*   Trying [::1]:3000...
+* connect to ::1 port 3000 from ::1 port 44026 failed: Connection refused
+*   Trying 127.0.0.1:3000...
+* connect to 127.0.0.1 port 3000 from 127.0.0.1 port 59492 failed: Connection refused
+* Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+* Closing connection
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+Connection failed
+```

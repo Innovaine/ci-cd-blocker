@@ -5,6 +5,8 @@ export interface TestContext {
 
 export interface TestResult {
   passed: boolean;
+  testsPassed?: number;
+  testsFailed?: number;
   errors?: string[];
 }
 
@@ -21,8 +23,17 @@ export async function orchestrateTests(
   const passed = Math.random() > 0.3;
 
   if (passed) {
-    return { passed: true };
+    return { 
+      passed: true,
+      testsPassed: 45,
+      testsFailed: 0
+    };
   } else {
-    return { passed: false, errors: ['Integration test suite failed on staging environment'] };
+    return { 
+      passed: false,
+      testsPassed: 30,
+      testsFailed: 15,
+      errors: ['Integration test suite failed on staging environment'] 
+    };
   }
 }

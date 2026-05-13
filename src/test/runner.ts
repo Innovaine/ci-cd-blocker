@@ -1,18 +1,26 @@
+import { orchestrateTests, TestContext, TestResult } from './orchestrator';
 import { RepoConfig } from '../config/repo-config';
-import { orchestrateTests } from './orchestrator';
 
-export interface TestContext {
-  owner: string;
-  repo: string;
-  prNumber: number;
-  config: RepoConfig;
-}
+export async function runTests(config: RepoConfig, context: TestContext): Promise<TestResult> {
+  console.log(`[runner] Starting test suite for PR ${context.prNumber}`);
 
-export async function runTests(context: TestContext): Promise<boolean> {
-  console.log(`[TestRunner] Starting test run for ${context.owner}/${context.repo} PR #${context.prNumber}`);
+  try {
+    const result = await orchestrateTests(config, context);
 
-  const result = await orchestrateTests(context.config, context.prNumber);
-  
-  console.log(`[TestRunner] Result: ${result.testsPassed ? 'PASS' : 'FAIL'}`);
-  return result.testsPassed;
+    console.log(`[runner] Test result: ${result.passed ? 'PASSED' : 'FAILED'}`);
+    console.log(`[runner]   Passed: ${result.testsPassed || 0}`);
+    console.log(`[runner]   Failed: ${result.testsFailed || 0}`);
+
+    if (result.errors && result.errors.length > 0) {
+      console.log(`[runner]   Errors: ${result.errors.join('; ')}`);
+    }
+
+    return result;
+  } catch (e) {
+    console.error(`[runner] Orchestration error:`, e);
+    return {
+      passed: false,
+      errors: [String(e)],
+    };
+  }
 }
