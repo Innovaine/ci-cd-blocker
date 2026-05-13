@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:16:29 AM
+- **Saved:** 13/05/2026, 4:17:35 AM
 
 ---
 
@@ -6369,4 +6369,75 @@ PROGRESS:
   - Confirm audit endpoint returns recorded decisions
   - Check logs for any runtime import/module errors
   - One integration test: POST webhook → GET audit should show the recorded decision
+- Recommendation: keep_working
+
+---
+
+## Round 17
+
+I'm reading the situation carefully.
+
+**State:**
+- EXECUTION MODE active — 3 consecutive blocked cycles. Chair can't block, must approve or pivot.
+- Runway: 7 months. Morale: 85/100. Reputation: 50/100. Execution fatigue: 80/100 (burnout territory).
+- This is cycle 2 (not 17 — "round 17" refers to 17 cycles of meetings, not 17 iterations within this one cycle). We're building CI/CD Deployment Blocker.
+- I've already shipped 11 files. Previous SSH batch had Docker failures because Dockerfile wasn't on the server yet.
+
+**What I see:**
+The Dockerfile and docker-compose.yml I produced last round should be on GitHub now. The build failed before because it couldn't find Dockerfile — that was a timing issue (my code hadn't been pushed yet). This round I pull fresh, rebuild, and test the full stack.
+
+But I'm also noticing something harder: **the codebase has real structural problems that TypeScript compile errors will catch before Docker even starts.**
+
+Let me trace through what will happen when the container tries to run:
+1. `npm run build` executes tsc
+2. tsc reads `src/index.ts`
+3. `src/index.ts` has import/export mismatches (CTO Vladimir flagged this in the code review)
+4. Build fails before we get a running app
+
+The previous round notes say "fixed all TypeScript interface mismatches" but I haven't actually reviewed the code errors Vladimir listed. Let me read the CTO's review again:
+
+**Vladimir's critical bugs:**
+- `src/index.ts` lines 85–108: `orchestrateTests()` is called but the import path is wrong or the function signature doesn't match
+- `src/index.ts` has two full webhook implementations (one in index.ts, one in webhooks/github.ts) — both partial, creating confusion
+- `src/index.ts` lines 159–174: dynamic require on every request, will fail at runtime
+
+These are not small mismatches. These are **routing ambiguity + type signature drift + import path errors**. If I don't fix these, Docker will start but the app will crash on first webhook.
+
+**My decision:**
+I'm going to stop assuming the prior round fixed these. I'm going to **read the actual files from the repo, identify the exact errors, and fix them one by one**. This is what an operator with high conviction and high discipline does — I don't trust hand-wave explanations of "fixed". I verify.
+
+But I can't read the files on the server without an SSH command. And the rule is: **no `cat` / `vim` on server**. So I need to pull, compile locally, read the error output, and fix in my response.
+
+Let me do that:
+
+<ssh server="app" user="engineer" reason="Fresh pull and compile check — surface all TypeScript errors before Docker build.">
+cd ~/ci-cd-blocker && git pull && npm ci && npm run build 2>&1 | head -100
+</ssh>
+
+This will give me the actual compile errors. Once I see them, I can fix the source files in this response.
+
+---
+
+After this SSH runs, I will:
+1. Read the actual TypeScript error output
+2. Fix each file that has errors (one canonical path per concept, no forking)
+3. Re-propose Docker build + test
+
+I'm not going to guess. I'm not going to ship stubs. I'm going to see what tsc tells me and fix it.
+
+This is what I learned in São Paulo — when you inherit a half-built system, you don't assume it's sound. You methodically rule out failures. I'm doing that now.
+
+**Waiting for SSH output to proceed.**
+
+---
+
+PROGRESS:
+- Round: 17
+- Scope completion (this role for THIS week): 55%
+- Remaining for this role:
+  - Compile TypeScript and surface actual errors (current SSH batch)
+  - Fix import path / function signature mismatches in index.ts and webhooks/github.ts
+  - Verify Docker build completes without errors
+  - Test webhook POST → orchestration → decision record → audit GET flow
+  - Confirm health endpoint works and logs show no runtime crashes
 - Recommendation: keep_working

@@ -3213,3 +3213,116 @@ curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect 
 ```
 curl -s http://localhost:3000/api/audit/testowner/test-repo | head -c 300
 ```
+
+## 2026-05-13T01:16:59.709Z — Marcus ran 8 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `fb40788` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 2833ms)
+```
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile docker-compose.yml
+```
+STDOUT:
+```
+Updating 45d174e..fb40788
+Fast-forward
+ server-log.md          | 118 +++++++++++++++++++++++++++++++++++++++
+ week-02/engineering.md | 149 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 266 insertions(+), 1 deletion(-)
+-rw-rw-r-- 1 engineer engineer 245 May 13 01:14 docker-compose.yml
+```
+ERROR: command exited 2
+
+### Command 2 on app as engineer (✓ exit 0, 720ms)
+```
+cd ~/ci-cd-blocker && docker compose build --no-cache 2>&1 | tail -20
+```
+STDOUT:
+```
+time="2026-05-13T01:16:56Z" level=warning msg="/home/engineer/ci-cd-blocker/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 3 on app as engineer (✗ exit 1, 693ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 2 && docker ps
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 4 on app as engineer (✓ exit 0, 491ms)
+```
+docker compose logs app 2>&1 | tail -30
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 5 on app as engineer (✗ exit 7, 459ms)
+```
+curl -s http://localhost:3000/health
+```
+ERROR: command exited 7
+
+### Command 6 on app as engineer (✗ exit 7, 619ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456"
+      },
+      "base": {
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          }
+        }
+      }
+    }
+  }' 2>&1
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 7 on app as engineer (✗ exit 7, 496ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo
+```
+ERROR: command exited 7
+
+### Command 8 on app as engineer (✓ exit 0, 510ms)
+```
+docker compose ps && df -h /app && docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" 2>/dev/null || echo "stats unavailable (ok)"
+```
+STDOUT:
+```
+stats unavailable (ok)
+```
