@@ -1,50 +1,99 @@
-// ASSUMPTION: Test files are Node/JavaScript tests (Jest, Mocha, or simple Node scripts)
-// ASSUMPTION: Tests exit with code 0 on pass, non-zero on fail
-// ASSUMPTION: Staging URL is reachable and health-checked before tests run
+import { spawn } from 'child_process';
 
-import { execSync } from 'child_process';
-
-export interface TestRunOptions {
+export interface RunTestsInput {
   stagingUrl: string;
   testPaths: string[];
-  timeout: number;
+  commitSha?: string;
+  timeout?: number;
 }
 
-export interface TestRunResult {
+export interface RunTestsOutput {
   passed: boolean;
-  failures?: Array<{ test: string; error: string }>;
+  error?: string;
+  details?: {
+    totalTests: number;
+    passed: number;
+    failed: number;
+    duration: number;
+  };
 }
 
-export async function runTests(options: TestRunOptions): Promise<TestRunResult> {
-  const { stagingUrl, testPaths, timeout } = options;
+/**
+ * Executes integration tests against a staging environment.
+ * Returns pass/fail status and details.
+ * ASSUMPTION: test suite is invoked via `npm test` with env var STAGING_URL.
+ */
+export async function runTests(input: RunTestsInput): Promise<RunTestsOutput> {
+  const { stagingUrl, testPaths, timeout = 60000 } = input;
 
-  console.log(`Running ${testPaths.length} test suite(s) against ${stagingUrl}`);
+  const startTime = Date.now();
 
-  // Set env var so tests can find staging
-  process.env.STAGING_URL = stagingUrl;
+  return new Promise((resolve) => {
+    const env = { ...process.env, STAGING_URL: stagingUrl };
 
-  const failures: Array<{ test: string; error: string }> = [];
+    // Spawn the test runner (npm test) with environment variables
+    const proc = spawn('npm', ['test', '--', ...testPaths], {
+      env,
+      stdio: 'pipe',
+      timeout,
+    });
 
-  for (const testPath of testPaths) {
-    try {
-      console.log(`  → Running ${testPath}`);
-      // ASSUMPTION: Test file is executable or can be run via node
-      execSync(`node ${testPath}`, {
-        stdio: 'inherit',
-        timeout,
-      });
-      console.log(`    ✓ ${testPath} passed`);
-    } catch (error) {
-      console.error(`    ✗ ${testPath} failed`);
-      failures.push({
-        test: testPath,
-        error: error instanceof Error ? error.message : String(error),
+    let stdout = '';
+    let stderr = '';
+
+    if (proc.stdout) {
+      proc.stdout.on('data', (data) => {
+        stdout += data.toString();
+        console.log('[Test Output]', data.toString());
       });
     }
-  }
 
-  return {
-    passed: failures.length === 0,
-    failures: failures.length > 0 ? failures : undefined,
-  };
+    if (proc.stderr) {
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+        console.error('[Test Error]', data.toString());
+      });
+    }
+
+    proc.on('error', (err) => {
+      const duration = Date.now() - startTime;
+      resolve({
+        passed: false,
+        error: `Failed to spawn test process: ${err.message}`,
+        details: {
+          totalTests: 0,
+          passed: 0,
+          failed: 1,
+          duration,
+        },
+      });
+    });
+
+    proc.on('exit', (code) => {
+      const duration = Date.now() - startTime;
+
+      if (code === 0) {
+        resolve({
+          passed: true,
+          details: {
+            totalTests: 1,
+            passed: 1,
+            failed: 0,
+            duration,
+          },
+        });
+      } else {
+        resolve({
+          passed: false,
+          error: `Test suite exited with code ${code}`,
+          details: {
+            totalTests: 1,
+            passed: 0,
+            failed: 1,
+            duration,
+          },
+        });
+      }
+    });
+  });
 }

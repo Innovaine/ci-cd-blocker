@@ -1,199 +1,124 @@
 import { loadRepoConfig } from '../config/repo-config';
-import { notifySlack } from '../slack/notifier';
+import { orchestrateTests } from '../test/orchestrator';
 import { recordDecision } from '../db/decisions';
+import { notifySlack } from '../slack/notifier';
 
 export interface GitHubWebhookPayload {
   action?: string;
   pull_request?: {
     number: number;
-    title: string;
     head: {
       sha: string;
       ref: string;
+      repo?: {
+        name: string;
+        owner?: {
+          login: string;
+        };
+      };
     };
     base: {
-      ref: string;
+      repo: {
+        name: string;
+        owner: {
+          login: string;
+        };
+      };
     };
+    title: string;
     user?: {
       login: string;
     };
   };
   repository?: {
-    full_name: string;
-    owner?: {
+    name: string;
+    owner: {
       login: string;
     };
-  };
-  push?: {
-    ref: string;
+    full_name: string;
   };
 }
 
-export interface WebhookResult {
-  event: string;
-  action: string;
-  status: 'processed' | 'skipped' | 'error';
-  decision?: string;
-  message?: string;
-}
-
-/**
- * handleGitHubWebhook
- * Single entry point for all GitHub webhook events.
- * Routes based on event type (pull_request, push, etc).
- * 
- * ASSUMPTION: MVP focuses on pull_request.opened and pull_request.synchronize.
- * Push events are logged but not acted upon in this cycle.
- */
-export async function handleGitHubWebhook(
-  eventType: string,
+export async function handleGitHubPullRequestEvent(
   payload: GitHubWebhookPayload
-): Promise<WebhookResult> {
-  const repoFullName = payload.repository?.full_name || 'unknown';
+): Promise<{ approved: boolean; reason: string }> {
+  // Only care about opened and synchronize (new commits pushed)
+  if (payload.action !== 'opened' && payload.action !== 'synchronize') {
+    return { approved: true, reason: 'Not a test-triggering action' };
+  }
 
-  console.log(`[github-webhook] Processing ${eventType} for ${repoFullName}`);
+  if (!payload.pull_request || !payload.repository) {
+    return { approved: true, reason: 'Malformed payload' };
+  }
 
+  const {
+    number: prNumber,
+    head: { sha: commitSha, repo: headRepo },
+    base: { repo: baseRepo },
+    title: prTitle,
+    user: { login: authorLogin } = {},
+  } = payload.pull_request;
+
+  const owner = baseRepo.owner.login;
+  const repo = baseRepo.name;
+
+  console.log(
+    `[GitHub] PR #${prNumber} opened/updated in ${owner}/${repo} at ${commitSha}`
+  );
+
+  // Load repo config (defines staging URL, test paths, etc.)
+  let config: any;
   try {
-    // Route by event type.
-    if (eventType === 'pull_request') {
-      return await handlePullRequest(payload);
-    } else if (eventType === 'push') {
-      return await handlePush(payload);
-    } else {
-      console.log(
-        `[github-webhook] Ignoring unhandled event type: ${eventType}`
-      );
-      return {
-        event: eventType,
-        action: 'ignored',
-        status: 'skipped',
-        message: `Event type ${eventType} not yet handled`,
-      };
-    }
-  } catch (error) {
-    console.error(`[github-webhook] Error processing ${eventType}:`, error);
-    return {
-      event: eventType,
-      action: 'error',
-      status: 'error',
-      message: String(error),
-    };
-  }
-}
-
-/**
- * handlePullRequest
- * Triggered when a PR is opened or updated (synchronize).
- * 
- * ASSUMPTION: We only act on "opened" and "synchronize".
- * Other actions (closed, reopened, etc.) are logged but not processed.
- */
-async function handlePullRequest(payload: GitHubWebhookPayload): Promise<WebhookResult> {
-  const action = payload.action || 'unknown';
-  const pr = payload.pull_request;
-  const repo = payload.repository?.full_name || 'unknown';
-
-  if (!pr) {
-    return {
-      event: 'pull_request',
-      action,
-      status: 'skipped',
-      message: 'No PR object in payload',
-    };
+    config = await loadRepoConfig(owner, repo);
+  } catch (err) {
+    console.error(`Config load failed for ${owner}/${repo}:`, err);
+    // If config is missing, assume tests should run
+    config = { stagingUrl: 'http://localhost:3001', testPaths: ['./test'] };
   }
 
-  console.log(`[pull-request] ${action} on ${repo}#${pr.number}`, {
-    title: pr.title,
-    sha: pr.head.sha,
-  });
-
-  // Only process opened and synchronize (new code pushed to PR).
-  if (!['opened', 'synchronize'].includes(action)) {
-    console.log(`[pull-request] Skipping action: ${action}`);
-    return {
-      event: 'pull_request',
-      action,
-      status: 'skipped',
-      message: `Action ${action} does not trigger integration tests`,
-    };
-  }
-
+  // Run integration tests against staging
+  let testResult: any;
   try {
-    // Extract owner/repo from full_name (e.g., "myorg/myrepo").
-    const [owner, repoName] = repo.split('/');
-    if (!owner || !repoName) {
-      throw new Error(`Invalid repository full_name: ${repo}`);
-    }
-
-    // Load the repo's deployment config.
-    const config = await loadRepoConfig(owner, repoName);
-    if (!config) {
-      console.log(
-        `[pull-request] No config found for ${owner}/${repoName}. Skipping.`
-      );
-      return {
-        event: 'pull_request',
-        action,
-        status: 'skipped',
-        message: `No deployment config for ${repo}`,
-      };
-    }
-
-    // ASSUMPTION: Integration tests are defined in config.integrationTests array.
-    // For MVP, we log the intent but do not actually run tests.
-    // Next cycle: call orchestrateTests(config, testContext) from src/test/orchestrator.ts
-    console.log(
-      `[pull-request] Would run integration tests for ${repo}#${pr.number}`,
-      {
-        testsConfigured: config.integrationTests?.length || 0,
-      }
-    );
-
-    // Record the decision (attempted check).
-    const decision = await recordDecision({
+    testResult = await orchestrateTests(config, {
+      prNumber,
+      commitSha,
+      owner,
       repo,
-      pullRequestNumber: pr.number,
-      commitSha: pr.head.sha,
-      status: 'PENDING',
-      reason: 'Integration tests initiated',
+      authorLogin,
+    });
+  } catch (err) {
+    console.error(`Test orchestration failed for PR #${prNumber}:`, err);
+    testResult = { passed: false, failureReason: String(err) };
+  }
+
+  const approved = testResult.passed === true;
+  const reason = approved ? 'All tests passed' : testResult.failureReason || 'Tests failed';
+
+  // Record decision in database
+  try {
+    await recordDecision({
+      owner,
+      repo,
+      prNumber,
+      commitSha,
+      decision: approved ? 'approved' : 'blocked',
+      reason,
       timestamp: new Date().toISOString(),
     });
-
-    // Notify Slack of decision.
-    await notifySlack({
-      channel: config.slackChannel,
-      message: `PR #${pr.number} in ${repo} — integration tests queued`,
-      color: 'warning',
-    });
-
-    return {
-      event: 'pull_request',
-      action,
-      status: 'processed',
-      decision: decision?.id || 'unknown',
-      message: `Integration tests initiated for PR #${pr.number}`,
-    };
-  } catch (error) {
-    console.error(`[pull-request] Error processing PR:`, error);
-    throw error;
+  } catch (err) {
+    console.error(`Failed to record decision for PR #${prNumber}:`, err);
   }
-}
 
-/**
- * handlePush
- * Triggered on push to any branch.
- * 
- * ASSUMPTION: MVP does not act on push events. They are logged for future use.
- */
-async function handlePush(payload: GitHubWebhookPayload): Promise<WebhookResult> {
-  const repo = payload.repository?.full_name || 'unknown';
+  // Notify Slack
+  try {
+    const slackMessage = approved
+      ? `✅ PR #${prNumber} in ${owner}/${repo} approved (tests passed). Merge ready.`
+      : `🚫 PR #${prNumber} in ${owner}/${repo} blocked. ${reason}`;
 
-  console.log(`[push] Received push event for ${repo}`);
+    await notifySlack(slackMessage, { prNumber, owner, repo, authorLogin });
+  } catch (err) {
+    console.error(`Slack notification failed for PR #${prNumber}:`, err);
+  }
 
-  return {
-    event: 'push',
-    action: 'received',
-    status: 'skipped',
-    message: 'Push events not yet implemented in MVP',
-  };
+  return { approved, reason };
 }

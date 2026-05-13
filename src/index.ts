@@ -1,109 +1,58 @@
-import express, { Request, Response } from 'express';
-import { handleGitHubWebhook } from './webhooks/github';
-import { getRecentDecisions } from './db/decisions';
-import { loadRepoConfig } from './config/repo-config';
-import { notifySlack } from './slack/notifier';
+import express from 'express';
+import { Router } from 'express';
+import { handleGitHubPullRequestEvent } from './webhooks/github';
+import { getDecisionsForPR, getRecentDecisions, recordDecision } from './db/decisions';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const port = process.env.PORT || 3000;
 
+// Middleware
 app.use(express.json());
 
-// ASSUMPTION: GitHub sends webhook payloads with X-Hub-Signature-256 header for verification.
-// For MVP, we trust the network layer (reverse proxy, firewall) and log all webhook events.
-// Production: validate HMAC before processing.
-
-/**
- * POST /webhook
- * Receives GitHub push/pull_request events.
- * Routes to handleGitHubWebhook which owns all GitHub integration logic.
- */
-app.post('/webhook', async (req: Request, res: Response) => {
+// GitHub webhook endpoint — single, canonical webhook handler
+app.post('/webhook/github', async (req, res) => {
   try {
-    const eventType = req.headers['x-github-event'] as string;
-    const payload = req.body;
-
-    console.log(`[webhook] Received GitHub event: ${eventType}`, {
-      repo: payload.repository?.full_name,
-      action: payload.action,
-    });
-
-    // All GitHub webhook logic lives in the webhook handler.
-    const result = await handleGitHubWebhook(eventType, payload);
-
+    const result = await handleGitHubPullRequestEvent(req.body);
     res.status(200).json({ success: true, result });
-  } catch (error) {
-    console.error('[webhook] Error processing GitHub event:', error);
-    res.status(500).json({ success: false, error: String(error) });
+  } catch (err) {
+    console.error('Webhook handler error:', err);
+    res.status(400).json({ success: false, error: String(err) });
   }
 });
 
-/**
- * GET /api/audit/:owner/:repo
- * Returns recent deployment decisions for a repo.
- */
-app.get('/api/audit/:owner/:repo', async (req: Request, res: Response) => {
+// Audit: get decisions for a specific PR
+app.get('/api/audit/:owner/:repo/:prNumber', async (req, res) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const decisions = await getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
+    res.status(200).json({ decisions });
+  } catch (err) {
+    console.error('Audit fetch error:', err);
+    res.status(400).json({ error: String(err) });
+  }
+});
+
+// Audit: get recent decisions for a repo
+app.get('/api/audit/:owner/:repo', async (req, res) => {
   try {
     const { owner, repo } = req.params;
-    const decisions = await getRecentDecisions(owner, repo);
-
-    res.status(200).json({
-      success: true,
-      owner,
-      repo,
-      decisions,
-    });
-  } catch (error) {
-    console.error('[audit] Error fetching decisions:', error);
-    res.status(500).json({ success: false, error: String(error) });
+    const limit = parseInt(req.query.limit as string, 10) || 50;
+    const decisions = await getRecentDecisions(owner, repo, limit);
+    res.status(200).json({ decisions });
+  } catch (err) {
+    console.error('Recent decisions fetch error:', err);
+    res.status(400).json({ error: String(err) });
   }
 });
 
-/**
- * GET /health
- * Liveness probe for container orchestration.
- */
-app.get('/health', (req: Request, res: Response) => {
+// Health check
+app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok' });
 });
 
-/**
- * POST /api/test
- * Test endpoint: accepts a repo config and runs integration tests locally.
- * ASSUMPTION: Used for manual validation during onboarding. Not part of CI/CD loop.
- */
-app.post('/api/test', async (req: Request, res: Response) => {
-  try {
-    const { owner, repo, testCommand } = req.body;
-
-    if (!owner || !repo || !testCommand) {
-      res.status(400).json({
-        success: false,
-        error: 'Missing required fields: owner, repo, testCommand',
-      });
-      return;
-    }
-
-    console.log(`[test] Running test for ${owner}/${repo}`, { testCommand });
-
-    // ASSUMPTION: For MVP, we log the test request but do not actually execute it.
-    // Next cycle: integrate with actual test orchestrator (src/test/orchestrator.ts).
-    res.status(200).json({
-      success: true,
-      message: 'Test request logged. Full integration coming next cycle.',
-      owner,
-      repo,
-      testCommand,
-    });
-  } catch (error) {
-    console.error('[test] Error processing test request:', error);
-    res.status(500).json({ success: false, error: String(error) });
-  }
+// Start server
+app.listen(port, () => {
+  console.log(`CI/CD Blocker running on port ${port}`);
 });
 
-/**
- * Start server.
- */
-app.listen(PORT, () => {
-  console.log(`[app] CI/CD Deployment Blocker listening on port ${PORT}`);
-});
+export default app;

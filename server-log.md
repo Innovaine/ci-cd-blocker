@@ -2224,3 +2224,46 @@ sleep 3
 docker compose logs --tail=20
 ```
 ERROR: command exited 1
+
+## 2026-05-13T00:51:07.377Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `0f6d3da` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 2424ms)
+```
+uptime
+df -h
+ls -la ~/ | head -20
+git --version
+npm --version
+docker --version
+docker compose version
+```
+STDOUT:
+```
+ 00:51:07 up  1:54,  4 users,  load average: 0.00, 0.00, 0.00
+Filesystem      Size  Used Avail Use% Mounted on
+tmpfs           3.2G  1.1M  3.2G   1% /run
+/dev/sda1       387G  2.9G  384G   1% /
+tmpfs            16G     0   16G   0% /dev/shm
+tmpfs           5.0M     0  5.0M   0% /run/lock
+/dev/sda16      881M  117M  703M  15% /boot
+/dev/sda15      105M  6.2M   99M   6% /boot/efi
+tmpfs           3.2G   12K  3.2G   1% /run/user/0
+tmpfs           3.2G   12K  3.2G   1% /run/user/1000
+total 48
+drwxr-x--- 8 engineer engineer 4096 May 13 00:29 .
+drwxr-xr-x 4 root     root     4096 May 12 23:36 ..
+-rw-r--r-- 1 engineer engineer  220 Mar 31  2024 .bash_logout
+-rw-r--r-- 1 engineer engineer 3968 May 13 00:25 .bashrc
+drwx------ 2 engineer engineer 4096 May 12 23:36 .cache
+drwx------ 3 engineer engineer 4096 May 13 00:04 .docker
+drwxrwxr-x 4 engineer engineer 4096 May 13 00:25 .npm
+drwxrwxr-x 8 engineer engineer 4096 May 13 00:25 .nvm
+-rwxrwxr-x 1 engineer engineer   99 May 13 00:25 .nvm-wrapper.sh
+-rw-r--r-- 1 engineer engineer  807 Mar 31  2024 .profile
+drwx------ 2 engineer engineer 4096 May 12 23:36 .ssh
+drwxrwxr-x 7 engineer engineer 4096 May 13 00:29 ci-cd-blocker
+git version 2.43.0
+Docker version 29.4.3, build 055a478
+Docker Compose version v5.1.3
+```

@@ -1,60 +1,83 @@
-/**
- * test/orchestrator.ts
- * Coordinates running integration tests against a staging environment.
- * 
- * ASSUMPTION: Tests are shell commands (npm scripts, bash, etc.).
- * For MVP, we define the structure but do not execute tests.
- * Next cycle: integrate with actual test runner and staging environment.
- */
-
-import { RepoConfig } from '../config/repo-config';
+import { runTests } from './runner';
 
 export interface TestContext {
-  repo: string;
-  pullRequestNumber: number;
+  prNumber: number;
   commitSha: string;
-  stagingUrl: string;
+  owner: string;
+  repo: string;
+  authorLogin?: string;
 }
 
 export interface TestResult {
-  status: 'PASSED' | 'FAILED' | 'SKIPPED' | 'ERROR';
-  testsRun: number;
-  testsPassed: number;
-  testsFailed: number;
-  error?: string;
-  logs?: string;
+  passed: boolean;
+  failureReason?: string;
+  details?: {
+    totalTests: number;
+    passed: number;
+    failed: number;
+    duration: number;
+  };
 }
 
 /**
- * orchestrateTests
- * Runs integration tests for a PR against the staging environment.
- * 
- * ASSUMPTION: Staging environment is already deployed with the PR's code.
- * ASSUMPTION: Tests communicate with stagingUrl to validate behavior.
+ * Orchestrates the full test workflow:
+ * 1. Load repo config (staging URL, test paths)
+ * 2. Check out the PR commit
+ * 3. Run integration tests
+ * 4. Return pass/fail decision
  */
 export async function orchestrateTests(
-  config: RepoConfig,
+  config: any,
   context: TestContext
 ): Promise<TestResult> {
-  console.log(`[orchestrator] Starting tests for ${context.repo}#${context.pullRequestNumber}`, {
-    commitSha: context.commitSha,
-    stagingUrl: context.stagingUrl,
-  });
+  const { stagingUrl, testPaths } = config;
+  const { prNumber, commitSha, owner, repo, authorLogin } = context;
 
-  // ASSUMPTION: For MVP, we simulate test execution.
-  // Production: spawn child processes, capture stdout/stderr, poll for completion.
+  if (!stagingUrl) {
+    return {
+      passed: false,
+      failureReason: 'No staging URL configured for this repo',
+    };
+  }
 
-  const result: TestResult = {
-    status: 'SKIPPED',
-    testsRun: 0,
-    testsPassed: 0,
-    testsFailed: 0,
-    logs: 'Test execution deferred to next cycle. Integration with staging environment pending.',
-  };
+  if (!testPaths || testPaths.length === 0) {
+    return {
+      passed: true, // If no tests defined, assume pass
+      failureReason: undefined,
+    };
+  }
 
-  console.log(`[orchestrator] Test result for ${context.repo}#${context.pullRequestNumber}`, {
-    status: result.status,
-  });
+  console.log(
+    `[Orchestrator] Running tests for ${owner}/${repo} PR #${prNumber}`
+  );
+  console.log(`  Staging URL: ${stagingUrl}`);
+  console.log(`  Test paths: ${testPaths.join(', ')}`);
 
-  return result;
+  // Run the test suite
+  try {
+    const result = await runTests({
+      stagingUrl,
+      testPaths,
+      commitSha,
+      timeout: 60000, // 60 seconds
+    });
+
+    if (result.passed) {
+      return {
+        passed: true,
+        details: result.details,
+      };
+    } else {
+      return {
+        passed: false,
+        failureReason: result.error || 'Tests failed',
+        details: result.details,
+      };
+    }
+  } catch (err) {
+    return {
+      passed: false,
+      failureReason: `Test execution error: ${String(err)}`,
+    };
+  }
 }
