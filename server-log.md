@@ -2208,3 +2208,19 @@ sleep 3
 docker compose logs --tail=20
 ```
 ERROR: command exited 1
+
+## 2026-05-13T00:46:29.630Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `ca36383` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 1, 5139ms)
+```
+cd ~
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+docker compose up -d
+sleep 3
+docker compose logs --tail=20
+```
+ERROR: command exited 1
