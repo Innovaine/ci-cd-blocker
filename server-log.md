@@ -2192,3 +2192,19 @@ STDOUT:
 Already up to date.
 ```
 ERROR: command exited 127
+
+## 2026-05-13T00:43:40.404Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `57599ad` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 1, 5547ms)
+```
+cd ~
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+docker compose up -d
+sleep 3
+docker compose logs --tail=20
+```
+ERROR: command exited 1
