@@ -2626,3 +2626,94 @@ ERROR: command exited 7
 docker compose logs app --tail=30
 ```
 ERROR: command exited 1
+
+## 2026-05-13T01:07:04.333Z — Marcus ran 6 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `0ecc4b0` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 5432ms)
+```
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build
+```
+STDOUT:
+```
+
+added 82 packages, and audited 83 packages in 2s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.2.0 build
+> tsc
+
+src/index.ts(17,22): error TS7030: Not all code paths return a value.
+src/index.ts(61,46): error TS7030: Not all code paths return a value.
+src/index.ts(81,50): error TS7030: Not all code paths return a value.
+src/webhook-handler.ts(8,36): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookPayload'.
+src/webhook-handler.ts(8,57): error TS2305: Module '"./webhooks/github.js"' has no exported member 'WebhookResult'.
+```
+ERROR: command exited 2
+
+### Command 2 on app as engineer (✗ exit 1, 715ms)
+```
+cd ~/ci-cd-blocker && docker compose build && docker compose up -d && sleep 3 && curl http://localhost:3000/health && echo ""
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 3 on app as engineer (✗ exit 7, 582ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "repo": {
+          "owner": {
+            "login": "acme-corp"
+          },
+          "name": "api-service"
+        }
+      }
+    },
+    "repository": {
+      "owner": {
+        "login": "acme-corp"
+      },
+      "name": "api-service"
+    }
+  }' && echo ""
+```
+ERROR: command exited 7
+
+### Command 4 on app as engineer (✗ exit 7, 445ms)
+```
+curl http://localhost:3000/api/audit/acme-corp/api-service && echo ""
+```
+ERROR: command exited 7
+
+### Command 5 on app as engineer (✗ exit 7, 447ms)
+```
+curl -X POST http://localhost:3000/api/override/acme-corp/api-service/42 \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Emergency hotfix, tests deferred"}' && echo ""
+```
+ERROR: command exited 7
+
+### Command 6 on app as engineer (✗ exit 1, 497ms)
+```
+docker compose logs app --tail=40
+```
+ERROR: command exited 1

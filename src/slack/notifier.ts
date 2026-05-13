@@ -1,4 +1,12 @@
-import { DecisionRecord } from '../db/decisions';
+interface DecisionRecord {
+  owner: string;
+  repo: string;
+  prNumber: number;
+  testsPassed: boolean;
+  overridden: boolean;
+  overrideReason?: string;
+  timestamp: number;
+}
 
 export async function notifySlack(decision: DecisionRecord): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
@@ -8,6 +16,10 @@ export async function notifySlack(decision: DecisionRecord): Promise<void> {
     return;
   }
 
+  const statusEmoji = decision.testsPassed ? '✅' : '❌';
+  const statusText = decision.testsPassed ? 'Tests Passed' : 'Tests Failed';
+  const overrideText = decision.overridden ? ` (Overridden: ${decision.overrideReason})` : '';
+
   const message = {
     text: `CI/CD Decision for ${decision.owner}/${decision.repo} PR #${decision.prNumber}`,
     blocks: [
@@ -15,23 +27,14 @@ export async function notifySlack(decision: DecisionRecord): Promise<void> {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*${decision.owner}/${decision.repo} PR #${decision.prNumber}*\n` +
-                `Status: ${decision.testsPassed ? '✅ Tests Passed' : '❌ Tests Failed'}\n` +
-                `Overridden: ${decision.overridden ? 'Yes' : 'No'}`,
+          text:
+            `*${decision.owner}/${decision.repo} PR #${decision.prNumber}*\n` +
+            `${statusEmoji} ${statusText}${overrideText}\n` +
+            `<t:${Math.floor(decision.timestamp / 1000)}:f>`,
         },
       },
     ],
   };
-
-  if (decision.overrideReason) {
-    message.blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `*Override Reason:* ${decision.overrideReason}`,
-      },
-    });
-  }
 
   try {
     const response = await fetch(webhookUrl, {
@@ -48,6 +51,6 @@ export async function notifySlack(decision: DecisionRecord): Promise<void> {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Slack] Failed to send notification:', message);
-    throw new Error(`Slack notification failed: ${message}`);
+    throw error;
   }
 }

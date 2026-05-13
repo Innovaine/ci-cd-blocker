@@ -1,7 +1,7 @@
-import { recordDecision, DecisionRecord } from '../db/decisions';
-import { loadRepoConfig } from '../config/repo-config';
+import { RepoConfig } from '../config/repo-config';
 import { orchestrateTests } from '../test/orchestrator';
 
+// GitHub webhook payload shape (simplified for MVP).
 export interface GitHubWebhookPayload {
   action: string;
   pull_request: {
@@ -23,46 +23,54 @@ export interface GitHubWebhookPayload {
   };
 }
 
+// Result of webhook processing.
 export interface WebhookHandlerResult {
-  decision: DecisionRecord | null;
-  error?: string;
+  testsPassed: boolean;
+  message: string;
 }
 
-export async function handleGitHubWebhook(payload: GitHubWebhookPayload): Promise<WebhookHandlerResult> {
+/**
+ * Handle incoming GitHub webhook event.
+ * Decides whether to block or allow a PR based on integration test results.
+ */
+export async function handleGitHubWebhook(
+  payload: GitHubWebhookPayload,
+  config: RepoConfig
+): Promise<WebhookHandlerResult> {
+  const owner = payload.repository.owner.login;
+  const repo = payload.repository.name;
+  const prNumber = payload.pull_request.number;
+
+  console.log(`[GitHub] Received webhook for ${owner}/${repo} PR #${prNumber}`);
+
+  // Only process 'opened' and 'synchronize' actions (new PR or push to existing PR).
+  if (payload.action !== 'opened' && payload.action !== 'synchronize') {
+    console.log(`[GitHub] Skipping action "${payload.action}" — only process opened/synchronize`);
+    return {
+      testsPassed: true,
+      message: 'Skipped (action not relevant)',
+    };
+  }
+
   try {
-    const owner = payload.repository.owner.login;
-    const repo = payload.repository.name;
-    const prNumber = payload.pull_request.number;
+    // Run integration tests against staging environment.
+    const testResult = await orchestrateTests(config, prNumber);
 
-    console.log(`[GitHub Webhook] Received: ${owner}/${repo} PR #${prNumber}, action: ${payload.action}`);
+    console.log(
+      `[GitHub] Tests for ${owner}/${repo} PR #${prNumber}: ${testResult.testsPassed ? 'PASS' : 'FAIL'}`
+    );
 
-    // Only process opened and synchronize actions
-    if (payload.action !== 'opened' && payload.action !== 'synchronize') {
-      console.log(`[GitHub Webhook] Ignoring action: ${payload.action}`);
-      return { decision: null };
-    }
-
-    // Load repo configuration
-    const config = loadRepoConfig(owner, repo);
-
-    // Orchestrate tests against staging
-    console.log(`[GitHub Webhook] Running integration tests for ${owner}/${repo}`);
-    const testResult = await orchestrateTests(config);
-
-    // Record the decision
-    const decision = recordDecision({
-      owner,
-      repo,
-      prNumber,
-      testsPassed: testResult.passed,
-      overridden: false,
-    });
-
-    console.log(`[GitHub Webhook] Decision recorded: ${decision.id}`);
-    return { decision };
+    return {
+      testsPassed: testResult.testsPassed,
+      message: testResult.testsPassed ? 'Tests passed' : 'Tests failed',
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error('[GitHub Webhook] Error processing webhook:', message);
-    return { decision: null, error: message };
+    console.error(`[GitHub] Error running tests: ${message}`);
+    // ASSUMPTION: On test orchestration failure, default to FAIL (conservative: block the merge).
+    return {
+      testsPassed: false,
+      message: `Test execution error: ${message}`,
+    };
   }
 }

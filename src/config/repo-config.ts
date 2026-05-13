@@ -7,14 +7,14 @@ export interface RepoConfig {
 }
 
 export function loadRepoConfig(owner: string, repo: string): RepoConfig {
-  // ASSUMPTION: For MVP, derive staging URL from repo name.
-  // Real version would read from a config file, database, or environment.
-  const stagingUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
+  // ASSUMPTION: For MVP, derive staging URL from environment + repo name.
+  // Real version will read from a config file, database, or repository-level config.
+  const stagingBaseUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
 
   return {
     owner,
     repo,
-    stagingUrl: `${stagingUrl}/${owner}/${repo}`,
+    stagingUrl: `${stagingBaseUrl}/${owner}/${repo}`,
     testTimeoutMs: 60000, // 1 minute
     integrationTestScript: 'npm run test:integration',
   };

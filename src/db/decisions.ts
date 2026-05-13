@@ -1,60 +1,36 @@
-export interface DecisionRecord {
-  id: string; // owner/repo/pr-number/timestamp
+// In-memory decision store (lost on restart; MVP only).
+interface DecisionRecord {
   owner: string;
   repo: string;
   prNumber: number;
   testsPassed: boolean;
   overridden: boolean;
   overrideReason?: string;
-  createdAt: number; // Unix timestamp in ms
+  timestamp: number;
 }
 
-interface DecisionInput {
-  owner: string;
-  repo: string;
-  prNumber: number;
-  testsPassed: boolean;
-  overridden: boolean;
-  overrideReason?: string;
+const store: Map<string, DecisionRecord> = new Map();
+
+export function recordDecision(decisionId: string, decision: DecisionRecord): void {
+  store.set(decisionId, decision);
+  console.log(`[DB] Decision recorded: ${decisionId}`);
 }
 
-// In-memory store — ASSUMPTION: Lost on restart. For MVP only.
-const decisions: DecisionRecord[] = [];
-
-export function recordDecision(input: DecisionInput): DecisionRecord {
-  const id = `${input.owner}/${input.repo}/${input.prNumber}/${Date.now()}`;
-  const record: DecisionRecord = {
-    id,
-    owner: input.owner,
-    repo: input.repo,
-    prNumber: input.prNumber,
-    testsPassed: input.testsPassed,
-    overridden: input.overridden,
-    overrideReason: input.overrideReason,
-    createdAt: Date.now(),
-  };
-  decisions.push(record);
-  return record;
+export function getDecisionForPR(owner: string, repo: string, prNumber: number): DecisionRecord | undefined {
+  const decisionId = `${owner}/${repo}#${prNumber}`;
+  return store.get(decisionId);
 }
 
-export function getDecisionsForRepo(owner: string, repo: string): DecisionRecord[] {
-  return decisions.filter((d) => d.owner === owner && d.repo === repo);
-}
+export function getRecentDecisions(owner: string, repo: string): DecisionRecord[] {
+  const repoPrefix = `${owner}/${repo}#`;
+  const results: DecisionRecord[] = [];
 
-export function getDecisionByPR(owner: string, repo: string, prNumber: number): DecisionRecord | undefined {
-  // Return the most recent decision for this PR
-  const relevant = decisions.filter((d) => d.owner === owner && d.repo === repo && d.prNumber === prNumber);
-  return relevant.length > 0 ? relevant[relevant.length - 1] : undefined;
-}
-
-export function overrideDecision(owner: string, repo: string, prNumber: number, reason: string): DecisionRecord {
-  // Create a new decision record with override flag
-  return recordDecision({
-    owner,
-    repo,
-    prNumber,
-    testsPassed: true, // Override = pass
-    overridden: true,
-    overrideReason: reason,
+  store.forEach((decision, decisionId) => {
+    if (decisionId.startsWith(repoPrefix)) {
+      results.push(decision);
+    }
   });
+
+  // Sort by timestamp descending (most recent first).
+  return results.sort((a, b) => b.timestamp - a.timestamp);
 }
