@@ -3352,3 +3352,149 @@ found 0 vulnerabilities
 > ci-cd-blocker@0.1.0 build
 > tsc
 ```
+
+## 2026-05-13T01:19:17.973Z — Marcus ran 10 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `d501dfc` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 2516ms)
+```
+ls -la ~/ci-cd-blocker 2>/dev/null | head -5 || echo "repo not yet cloned"
+```
+STDOUT:
+```
+total 208
+drwxrwxr-x 11 engineer engineer  4096 May 13 01:18 .
+drwxr-x---  8 engineer engineer  4096 May 13 01:14 ..
+drwxrwxr-x  8 engineer engineer  4096 May 13 01:18 .git
+-rw-rw-r--  1 engineer engineer   640 May 13 01:14 README.md
+```
+
+### Command 2 on app as engineer (✓ exit 0, 988ms)
+```
+cd ~/ci-cd-blocker 2>/dev/null || git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker && git pull
+```
+STDOUT:
+```
+Updating 1d2c9a5..d501dfc
+Fast-forward
+ server-log.md          |  26 +++++++++
+ week-02/engineering.md | 143 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 168 insertions(+), 1 deletion(-)
+```
+
+### Command 3 on app as engineer (✓ exit 0, 2093ms)
+```
+cd ~/ci-cd-blocker && npm ci && npm run build 2>&1 | tail -20
+```
+STDOUT:
+```
+
+added 108 packages, and audited 109 packages in 767ms
+
+17 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.1.0 build
+> tsc
+```
+
+### Command 4 on app as engineer (✓ exit 0, 768ms)
+```
+cd ~/ci-cd-blocker && docker compose down 2>&1 ; docker compose build --no-cache 2>&1 | tail -20
+```
+STDOUT:
+```
+time="2026-05-13T01:19:14Z" level=warning msg="/home/engineer/ci-cd-blocker/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+time="2026-05-13T01:19:14Z" level=warning msg="/home/engineer/ci-cd-blocker/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 5 on app as engineer (✗ exit 1, 675ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker compose ps
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 6 on app as engineer (✓ exit 0, 534ms)
+```
+docker compose logs app 2>&1 | tail -40
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 7 on app as engineer (✗ exit 7, 523ms)
+```
+curl -s http://localhost:3000/health 2>&1
+```
+ERROR: command exited 7
+
+### Command 8 on app as engineer (✗ exit 7, 650ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 9 on app as engineer (✗ exit 7, 499ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1
+```
+ERROR: command exited 7
+
+### Command 10 on app as engineer (✗ exit 1, 521ms)
+```
+docker compose ps && docker compose logs app 2>&1 | tail -10
+```
+ERROR: command exited 1

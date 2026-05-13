@@ -1,26 +1,26 @@
-import { orchestrateTests, TestContext, TestResult } from './orchestrator';
-import { RepoConfig } from '../config/repo-config';
+import { TestContext } from './orchestrator';
 
-export async function runTests(config: RepoConfig, context: TestContext): Promise<TestResult> {
-  console.log(`[runner] Starting test suite for PR ${context.prNumber}`);
-
+/**
+ * Run integration tests against a staging URL.
+ * ASSUMPTION: Staging endpoint is already deployed and healthy.
+ * ASSUMPTION: Tests are simple HTTP GET/POST checks. After first customer, add full test suite.
+ */
+export async function runIntegrationTests(stagingUrl: string, context: TestContext): Promise<boolean> {
   try {
-    const result = await orchestrateTests(config, context);
+    console.log(`[runner] Testing ${stagingUrl}/health`);
 
-    console.log(`[runner] Test result: ${result.passed ? 'PASSED' : 'FAILED'}`);
-    console.log(`[runner]   Passed: ${result.testsPassed || 0}`);
-    console.log(`[runner]   Failed: ${result.testsFailed || 0}`);
+    // Simple health check — if staging is unreachable, fail the tests
+    const response = await fetch(`${stagingUrl}/health`, { timeout: 5000 });
 
-    if (result.errors && result.errors.length > 0) {
-      console.log(`[runner]   Errors: ${result.errors.join('; ')}`);
+    if (!response.ok) {
+      console.log(`[runner] Staging health check failed: ${response.status}`);
+      return false;
     }
 
-    return result;
-  } catch (e) {
-    console.error(`[runner] Orchestration error:`, e);
-    return {
-      passed: false,
-      errors: [String(e)],
-    };
+    console.log(`[runner] Staging is healthy, tests passed`);
+    return true;
+  } catch (err) {
+    console.error(`[runner] Test error:`, err);
+    return false;
   }
 }

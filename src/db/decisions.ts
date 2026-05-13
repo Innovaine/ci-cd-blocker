@@ -1,27 +1,27 @@
 export interface Decision {
-  id: string;
   owner: string;
   repo: string;
   prNumber: number;
-  status: 'approved' | 'blocked' | 'approved_override' | 'skipped';
+  decision: 'blocked' | 'approved' | 'error';
   reason: string;
-  createdAt: string;
-  overrideReason?: string;
-  overriddenAt?: string;
+  timestamp: string;
 }
 
-// In-memory store. ASSUMPTION: Acceptable for MVP (pre-revenue, no persistence requirement yet).
-const decisionStore: Map<string, Decision[]> = new Map();
+// ASSUMPTION: In-memory storage. After first paying customer, move to SQLite or PostgreSQL.
+const decisionStore: Decision[] = [];
 
 export function recordDecision(decision: Decision): void {
-  const key = `${decision.owner}/${decision.repo}`;
-  if (!decisionStore.has(key)) {
-    decisionStore.set(key, []);
-  }
-  decisionStore.get(key)!.push(decision);
+  decisionStore.push(decision);
+  console.log(`[decisions] Recorded: ${decision.owner}/${decision.repo}#${decision.prNumber} -> ${decision.decision}`);
 }
 
-export function getDecisions(owner: string, repo: string): Decision[] {
-  const key = `${owner}/${repo}`;
-  return decisionStore.get(key) || [];
+export function getRecentDecisions(owner: string, repo: string, limit: number = 10): Decision[] {
+  return decisionStore
+    .filter((d) => d.owner === owner && d.repo === repo)
+    .slice(-limit)
+    .reverse();
+}
+
+export function getAllDecisions(): Decision[] {
+  return [...decisionStore];
 }

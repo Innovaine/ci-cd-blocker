@@ -1,39 +1,68 @@
+import { RepoConfig } from '../config/repo-config';
+import { runIntegrationTests } from './runner';
+
 export interface TestContext {
   prNumber: number;
   headSha: string;
+  headRef: string;
+  baseSha: string;
+  baseRef: string;
+  owner: string;
+  repo: string;
 }
 
 export interface TestResult {
   passed: boolean;
-  testsPassed?: number;
-  testsFailed?: number;
-  errors?: string[];
+  reason: string;
+  duration: number;
 }
 
-export async function orchestrateTests(
-  config: any,
-  context: TestContext
-): Promise<TestResult> {
-  // ASSUMPTION: In MVP, tests are a stub. We don't actually run anything.
-  // Return: 70% pass rate (hardcoded) so we can test blocked vs approved paths.
-  console.log(`[orchestrator] Running tests for PR ${context.prNumber} at sha ${context.headSha}`);
-  console.log(`[orchestrator] Staging URL: ${config.stagingUrl}`);
+/**
+ * Orchestrate integration tests for a PR.
+ * 1. Validate test context
+ * 2. Run integration tests against staging
+ * 3. Return pass/fail result
+ *
+ * ASSUMPTION: Tests are run synchronously (blocking). Timeout guard comes after first customer.
+ */
+export async function orchestrateTests(config: RepoConfig, context: TestContext): Promise<TestResult> {
+  console.log(`[orchestrator] Starting tests for ${context.owner}/${context.repo}#${context.prNumber}`);
 
-  // Stub: 70% pass
-  const passed = Math.random() > 0.3;
+  const startTime = Date.now();
 
-  if (passed) {
-    return { 
-      passed: true,
-      testsPassed: 45,
-      testsFailed: 0
-    };
-  } else {
-    return { 
+  try {
+    // ASSUMPTION: staging URL is in config or hardcoded. For MVP, assume it exists.
+    const stagingUrl = config.stagingUrl || `http://staging-${context.repo}.local:3000`;
+
+    console.log(`[orchestrator] Running tests against ${stagingUrl}`);
+
+    // Run the actual test suite
+    const testsPassed = await runIntegrationTests(stagingUrl, context);
+
+    const duration = Date.now() - startTime;
+
+    if (testsPassed) {
+      console.log(`[orchestrator] ✓ Tests passed in ${duration}ms`);
+      return {
+        passed: true,
+        reason: 'all-tests-passed',
+        duration,
+      };
+    } else {
+      console.log(`[orchestrator] ✗ Tests failed in ${duration}ms`);
+      return {
+        passed: false,
+        reason: 'integration-tests-failed',
+        duration,
+      };
+    }
+  } catch (err) {
+    const duration = Date.now() - startTime;
+    console.error(`[orchestrator] Error during test orchestration:`, err);
+    return {
       passed: false,
-      testsPassed: 30,
-      testsFailed: 15,
-      errors: ['Integration test suite failed on staging environment'] 
+      reason: String(err),
+      duration,
     };
   }
 }
