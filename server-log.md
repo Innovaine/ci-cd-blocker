@@ -2407,3 +2407,32 @@ src/webhooks/github.ts(4,3): error TS2724: '"../db/decisions.js"' has no exporte
 src/webhooks/github.ts(5,3): error TS2305: Module '"../db/decisions.js"' has no exported member 'DecisionRecord'.
 ```
 ERROR: command exited 2
+
+## 2026-05-13T01:00:14.210Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `13b90f8` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 5349ms)
+```
+cd ~
+rm -rf ci-cd-blocker
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+```
+STDOUT:
+```
+
+added 82 packages, and audited 83 packages in 2s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.2.0 build
+> tsc
+
+src/test/orchestrator.ts(33,7): error TS2353: Object literal may only specify known properties, and 'timeout' does not exist in type 'RequestInit'.
+```
+ERROR: command exited 2

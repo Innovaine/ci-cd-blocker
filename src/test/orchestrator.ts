@@ -28,10 +28,16 @@ export async function orchestrateTests(context: TestContext): Promise<TestResult
 
   try {
     // Simple health check: GET stagingUrl and expect 2xx.
+    // Use AbortController for timeout (standard Fetch API way).
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), 10000);
+
     const response = await fetch(stagingUrl, {
       method: 'GET',
-      timeout: 10000,
+      signal: controller.signal,
     });
+
+    clearTimeout(timeoutHandle);
 
     if (response.ok) {
       console.log(

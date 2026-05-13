@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 3:59:52 AM
+- **Saved:** 13/05/2026, 4:00:50 AM
 
 ---
 
@@ -2241,4 +2241,152 @@ PROGRESS:
   - Send a mock GitHub webhook POST to `/webhook` and verify decision is saved and Slack is notified
   - Test the audit endpoints (`/api/audit/:owner/:repo`)
   - Test the manual override endpoint (`POST /api/override/:owner/:repo/:prNumber`)
+- Recommendation: keep_working
+
+---
+
+## Round 6
+
+I'm reading the SSH failure carefully.
+
+**What I see:**
+
+The `npm run build` command exited with code 2. The TypeScript compiler threw an error:
+
+```
+src/test/orchestrator.ts(33,7): error TS2353: Object literal may only specify known properties, and 'timeout' does not exist in type 'RequestInit'.
+```
+
+**The problem:** I wrote `fetch(stagingUrl, { method: 'GET', timeout: 10000 })` but `fetch()` in Node.js doesn't accept a `timeout` option in RequestInit. That's a Node-specific extension, and TypeScript's `@types/node` types the standard Fetch API strictly. I can't pass `timeout` there.
+
+**The fix:** Use `AbortSignal` with `AbortController` — the standard way to implement timeouts with Fetch. It's verbose but it's the right way and TypeScript will accept it.
+
+I'm also going to add a Dockerfile since we're running in Docker and I haven't written one yet.
+
+---
+
+### `src/test/orchestrator.ts`
+```typescript
+export interface TestContext {
+  prNumber: number;
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+}
+
+export interface TestResult {
+  passed: boolean;
+  error?: string;
+}
+
+/**
+ * Orchestrate integration tests against the staging environment.
+ * 
+ * ASSUMPTION: For MVP, this makes a simple HTTP GET request to the staging URL
+ * and checks that it returns 2xx. In the next iteration, this will:
+ *   1. Parse repo config for specific endpoints to test
+ *   2. Run a series of HTTP assertions
+ *   3. Return detailed results per endpoint
+ */
+export async function orchestrateTests(context: TestContext): Promise<TestResult> {
+  const { owner, repo, prNumber, stagingUrl } = context;
+
+  console.log(
+    `[Integration Test] Running for ${owner}/${repo}#${prNumber} against ${stagingUrl}`
+  );
+
+  try {
+    // Simple health check: GET stagingUrl and expect 2xx.
+    // Use AbortController for timeout (standard Fetch API way).
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), 10000);
+
+    const response = await fetch(stagingUrl, {
+      method: 'GET',
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutHandle);
+
+    if (response.ok) {
+      console.log(
+        `[Integration Test] PASSED: ${stagingUrl} returned ${response.status}`
+      );
+      return { passed: true };
+    } else {
+      const error = `Staging server returned ${response.status}`;
+      console.log(`[Integration Test] FAILED: ${error}`);
+      return { passed: false, error };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.log(`[Integration Test] ERROR: ${errorMessage}`);
+    return { passed: false, error: `Integration test execution failed: ${errorMessage}` };
+  }
+}
+```
+
+### `Dockerfile`
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY src ./src
+
+# Build TypeScript
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {if (r.statusCode !== 200) throw new Error(r.statusCode)})"
+
+# Start app
+CMD ["npm", "start"]
+```
+
+Now test the build:
+
+<ssh server="app" user="engineer" reason="Rebuild with fixed timeout handling and new Dockerfile">
+cd ~/ci-cd-blocker
+git pull
+npm run build
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Fixed TypeScript fetch timeout:** Removed invalid `timeout` property from RequestInit. Now uses `AbortController` + `AbortSignal`, which is standard Fetch API and TypeScript-compliant.
+
+- **Added Dockerfile:** Alpine Node 20 base, `npm ci` for deps, builds TypeScript, exposes port 3000, includes HEALTHCHECK. Matches docker-compose.yml.
+
+- **Still blocked on one thing:** I need to verify the app actually listens on 3000 and that the `/webhook` endpoint accepts POST. The compile fix addresses the immediate TS error, but I haven't yet tested the running app against a mock webhook.
+
+- **Tech debt:** Override endpoint (`POST /api/override`) has no auth. Slack notifications fail silently if webhook URL missing. Still acceptable for MVP but needs doc before shipping to customers.
+
+- **Status:** On track. Compile should pass now. Next round: boot the app and send a mock webhook POST.
+
+---
+
+PROGRESS:
+- Round: 6
+- Scope completion (this role for THIS week): 75%
+- Remaining for this role:
+  - Verify TypeScript build completes without errors
+  - Boot docker-compose and confirm app listens on port 3000 and serves `/health`
+  - Send a mock GitHub webhook POST to `/webhook` and verify decision is saved
+  - Test audit endpoints (`/api/audit/:owner/:repo`)
+  - Test manual override endpoint and verify Slack notification (if webhook URL is configured)
 - Recommendation: keep_working
