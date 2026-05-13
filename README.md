@@ -1,28 +1,16 @@
-# CI/CD Deployment Blocker — Catch breaking changes before they merge
+# Deployment Blocker
 
-**Status:** ↪ APPROVED WITH PIVOT
-**Proposed by:** Karim
-**Cycle:** 1
-**Date:** 13/05/2026, 12:32:38 AM
+A GitHub-only bot that blocks PRs when integration tests fail against a live staging environment.
 
-## Pivot direction
+## Features
 
-Ship a GitHub-only bot that blocks merges when integration tests fail against a live staging environment, with manual override + Slack notification. Cut GitLab, pre-built rules, and rollback plan from MVP.
+- **Webhook-driven**: Listens for GitHub PR events (opened, synchronize, reopened)
+- **Test orchestration**: Runs configurable test commands against staging
+- **Decision audit trail**: JSONL-based audit log of all block/allow decisions
+- **Manual override**: API endpoint to override automated decisions with reason
+- **Slack notifications**: Optional notifications to Slack on block events
+- **No external dependencies**: Ships with Node + Express, no database required for MVP
 
-## Original pitch
+## Deployment
 
-TITLE: CI/CD Deployment Blocker — Catch breaking changes before they merge
-
-PITCH: A GitHub/GitLab bot that runs your integration tests against a live staging environment in parallel with your normal CI suite, flags tests that would fail in production, and blocks the merge with a one-click "override and rollback plan" option. No new infrastructure to manage — hooks into existing test runners and staging deploys. Ships with pre-built rules for common breaking patterns (schema changes, API contract violations, dependency conflicts).
-
-WHO_FOR: Mid-market engineering teams running 20+ deploys per week who've had production incidents from "passed CI but failed in staging" scenarios.
-
-WHY_NOW: Every team we talk to has a staging environment already; the pain is real and immediate; we can ship a working MVP that integrates with three CI platforms in three weeks, charge $200/month per team, and iterate on rules based on actual customer test failure patterns.
-
----
-
-This project folder contains every artifact the company produced for this idea:
-
-- `reviews/` — domain reviews (research, CTO, CFO, devil's advocate, customer sim, etc.)
-- `decisions/` — manager shortlist, CEO decision, chairman decision
-- `execution/` — HR staffing plan, sales outreach drafts
+### Docker
