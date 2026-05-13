@@ -2,26 +2,19 @@ export interface RepoConfig {
   owner: string;
   repo: string;
   stagingUrl: string;
-  integrationTestCommand?: string;
+  testTimeoutMs: number;
+  integrationTestScript: string;
 }
 
-/**
- * Load repo-specific configuration.
- * 
- * ASSUMPTION: For MVP, we return a default config with a hardcoded staging URL.
- * In production, this would:
- *   1. Check a config file in the repo (.ci-cd-blocker.json or similar)
- *   2. Fall back to a database of org-level settings
- *   3. Cache the result to avoid repeated I/O
- */
-export async function loadRepoConfig(owner: string, repo: string): Promise<RepoConfig> {
-  // ASSUMPTION: Staging URL is derived from repo name. Real implementation would read from config file.
-  const stagingUrl = `https://${repo}-staging.example.com`;
+export function loadRepoConfig(owner: string, repo: string): RepoConfig {
+  // ASSUMPTION: For MVP, derive staging URL from repo name. Real version would read from a config file or database.
+  const stagingUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
 
   return {
     owner,
     repo,
-    stagingUrl,
-    integrationTestCommand: 'npm test',
+    stagingUrl: `${stagingUrl}/${owner}/${repo}`,
+    testTimeoutMs: 60000, // 1 minute
+    integrationTestScript: 'npm run test:integration',
   };
 }

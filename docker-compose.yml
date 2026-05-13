@@ -6,14 +6,15 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "3000:3000"
+      - '3000:3000'
     environment:
       - NODE_ENV=production
       - PORT=3000
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - STAGING_BASE_URL=${STAGING_BASE_URL:-http://staging.example.com}
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 30s
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 10s
       timeout: 5s
       retries: 3

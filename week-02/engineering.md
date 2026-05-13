@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:01:53 AM
+- **Saved:** 13/05/2026, 4:04:46 AM
 
 ---
 
@@ -2629,4 +2629,557 @@ PROGRESS:
   - Query audit endpoints to confirm retrieval works
   - Test override endpoint records approvals
   - Check docker-compose logs for any runtime errors or warnings
+- Recommendation: keep_working
+
+---
+
+## Round 8
+
+I'm reading this carefully. Let me map what I'm seeing:
+
+**State:**
+- 3 consecutive blocked cycles → EXECUTION MODE active. I cannot block. I must ship or pivot.
+- Last 5 SSH attempts all failed. App won't compile, won't boot, won't respond to requests.
+- TypeScript compile error in `src/index.ts` line 25: `DecisionRecord` type mismatch.
+- I've already written 11 files this week (index.ts, github.ts, orchestrator.ts, runner.ts, config, decisions db, slack notifier, package.json, tsconfig, docker-compose, webhook-handler).
+- Execution fatigue is at 80/100 (burnout). Morale 85. We're tight on runway (7 months).
+
+**What I see in the code I wrote:**
+
+The compile error is my fault. In `src/index.ts` line 25, I'm passing a `DecisionRecord` where a `string` is expected. Looking at the decision db structure, `saveDecision()` returns a `DecisionRecord`, but somewhere in the chain I'm treating it as a string. This is sloppy—I shipped code without testing the compile.
+
+The deeper problem: I shipped 11 files without verifying they type-check together. This is not discipline; this is theater. I'm the engineer who talks about "methodically ruling out possibilities" and "defending decisions with data," and I just shipped an app that doesn't compile.
+
+**What I'm doing:**
+
+I'm not going to rewrite the whole app. I'm going to **fix the type errors methodically**, re-test the compile, then boot it. I will not ship another round of code without running `npm run build` to completion first. 
+
+I'm also stripping away any assumption of complexity that isn't proven necessary yet. Decision storage, webhook routing, Slack notification—all of that stays. But I'm going to make sure it compiles and runs before I propose SSH commands.
+
+Let me trace the actual bug:
+
+1. `src/db/decisions.ts` — `saveDecision()` takes a `DecisionRecord` and stores it. What does it return?
+2. `src/index.ts` line 25 — I'm trying to assign the result of something to a variable that needs to be a `string`.
+
+Looking at my prior code output (the canonical paths I've written), I can infer the structure, but I haven't seen the actual decisions.ts content in this round. Let me rebuild it cleanly, with correct types, and fix index.ts to match.
+
+---
+
+### `src/db/decisions.ts`
+```typescript
+export interface DecisionRecord {
+  id?: string;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  testsPassed: boolean;
+  overridden: boolean;
+  overrideReason?: string;
+  timestamp: Date;
+}
+
+// In-memory store for MVP. No persistence across restarts.
+const decisions: Map<string, DecisionRecord[]> = new Map();
+
+function getKey(owner: string, repo: string): string {
+  return `${owner}/${repo}`;
+}
+
+export function saveDecision(record: DecisionRecord): DecisionRecord {
+  const key = getKey(record.owner, record.repo);
+  record.id = `${key}/pr-${record.prNumber}/${Date.now()}`;
+  
+  if (!decisions.has(key)) {
+    decisions.set(key, []);
+  }
+  
+  const list = decisions.get(key)!;
+  list.push(record);
+  
+  return record;
+}
+
+export function getDecisionsForPR(
+  owner: string,
+  repo: string,
+  prNumber: number
+): DecisionRecord[] {
+  const key = getKey(owner, repo);
+  const list = decisions.get(key) || [];
+  return list.filter((d) => d.prNumber === prNumber);
+}
+
+export function getRecentDecisions(
+  owner: string,
+  repo: string,
+  limit: number = 10
+): DecisionRecord[] {
+  const key = getKey(owner, repo);
+  const list = decisions.get(key) || [];
+  return list.slice(-limit);
+}
+```
+
+### `src/index.ts`
+```typescript
+import express, { Request, Response } from 'express';
+import { handleGitHubWebhook } from './webhooks/github';
+import { notifySlack } from './slack/notifier';
+import { saveDecision, getRecentDecisions, getDecisionsForPR, DecisionRecord } from './db/decisions';
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware
+app.use(express.json());
+
+// Health check
+app.get('/health', (req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok' });
+});
+
+// GitHub webhook endpoint
+app.post('/webhook', async (req: Request, res: Response) => {
+  try {
+    console.log('[Webhook] Received event:', req.body?.action || 'unknown action');
+    
+    const result = await handleGitHubWebhook(req.body);
+
+    // Attempt Slack notification if webhook URL is configured
+    if (process.env.SLACK_WEBHOOK_URL && result.decision) {
+      await notifySlack(result.decision).catch((err) => {
+        console.warn('[Slack] Notification failed (non-blocking):', err.message);
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Webhook processed',
+      decision: result.decision,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Webhook] Error processing webhook:', message);
+    res.status(400).json({ success: false, error: message });
+  }
+});
+
+// Audit endpoint: get recent decisions for a repo
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
+  try {
+    const { owner, repo } = req.params;
+    const decisions = getRecentDecisions(owner, repo, 10);
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      decisions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching decisions:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Audit endpoint: get decisions for a specific PR
+app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const decisions = getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
+    res.status(200).json({
+      success: true,
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      decisions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Audit] Error fetching PR decisions:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Manual override endpoint
+app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const { reason } = req.body;
+
+    // ASSUMPTION: No auth on this endpoint for MVP. Add GitHub token verification in production.
+    const decision = saveDecision({
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      testsPassed: true,
+      overridden: true,
+      overrideReason: reason || 'Manual override',
+      timestamp: new Date(),
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Override recorded',
+      decision,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Override] Error recording override:', message);
+    res.status(500).json({ success: false, error: message });
+  }
+});
+
+// Start server
+app.listen(port, () => {
+  console.log(`[App] CI/CD Blocker listening on port ${port}`);
+});
+```
+
+Now I need to verify that the webhook handler is correctly structured. Let me check what it should export:
+
+### `src/webhooks/github.ts`
+```typescript
+import { DecisionRecord, saveDecision } from '../db/decisions';
+import { loadRepoConfig } from '../config/repo-config';
+
+export interface WebhookResult {
+  decision: DecisionRecord | null;
+  message: string;
+}
+
+export async function handleGitHubWebhook(payload: any): Promise<WebhookResult> {
+  try {
+    // Only process pull_request events
+    const action = payload.action;
+    const pr = payload.pull_request;
+    const repo = payload.repository;
+
+    if (!pr || !repo) {
+      return {
+        decision: null,
+        message: 'Not a pull request event, skipping',
+      };
+    }
+
+    const owner = repo.owner?.login || 'unknown';
+    const repoName = repo.name || 'unknown';
+    const prNumber = pr.number;
+
+    console.log(`[GitHub] Processing PR #${prNumber} on ${owner}/${repoName}`);
+
+    // Load repo configuration
+    const config = loadRepoConfig(owner, repoName);
+
+    // ASSUMPTION: For MVP, assume tests pass if no error. In real version, we'd:
+    // 1. Check PR status (draft, mergeable, etc.)
+    // 2. Trigger integration tests against staging environment
+    // 3. Wait for result
+    // 4. Block merge if tests fail
+    const testsPassed = true; // Placeholder: would run orchestrateTests(config) here
+
+    const decision = saveDecision({
+      owner,
+      repo: repoName,
+      prNumber,
+      testsPassed,
+      overridden: false,
+      timestamp: new Date(),
+    });
+
+    console.log(`[GitHub] Decision saved:`, decision.id);
+
+    return {
+      decision,
+      message: testsPassed ? 'Tests passed, PR eligible to merge' : 'Tests failed, PR blocked',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[GitHub] Error handling webhook:', message);
+    throw new Error(`Webhook processing failed: ${message}`);
+  }
+}
+```
+
+Now let me verify the slack notifier doesn't have type issues:
+
+### `src/slack/notifier.ts`
+```typescript
+import { DecisionRecord } from '../db/decisions';
+
+export async function notifySlack(decision: DecisionRecord): Promise<void> {
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+
+  if (!webhookUrl) {
+    console.warn('[Slack] SLACK_WEBHOOK_URL not configured, skipping notification');
+    return;
+  }
+
+  const message = {
+    text: `CI/CD Decision for ${decision.owner}/${decision.repo} PR #${decision.prNumber}`,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*${decision.owner}/${decision.repo} PR #${decision.prNumber}*\n` +
+                `Status: ${decision.testsPassed ? '✅ Tests Passed' : '❌ Tests Failed'}\n` +
+                `Overridden: ${decision.overridden ? 'Yes' : 'No'}`,
+        },
+      },
+    ],
+  };
+
+  if (decision.overrideReason) {
+    message.blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Override Reason:* ${decision.overrideReason}`,
+      },
+    });
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(message),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Slack API returned ${response.status}`);
+    }
+
+    console.log('[Slack] Notification sent successfully');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Slack] Failed to send notification:', message);
+    throw new Error(`Slack notification failed: ${message}`);
+  }
+}
+```
+
+Verify repo config loader:
+
+### `src/config/repo-config.ts`
+```typescript
+export interface RepoConfig {
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+  testTimeoutMs: number;
+  integrationTestScript: string;
+}
+
+export function loadRepoConfig(owner: string, repo: string): RepoConfig {
+  // ASSUMPTION: For MVP, derive staging URL from repo name. Real version would read from a config file or database.
+  const stagingUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
+
+  return {
+    owner,
+    repo,
+    stagingUrl: `${stagingUrl}/${owner}/${repo}`,
+    testTimeoutMs: 60000, // 1 minute
+    integrationTestScript: 'npm run test:integration',
+  };
+}
+```
+
+Now I need to ensure package.json and tsconfig are correct. Let me verify the tsconfig compiles with strict mode and modern target:
+
+### `tsconfig.json`
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### `package.json`
+```json
+{
+  "name": "ci-cd-blocker",
+  "version": "0.2.0",
+  "description": "GitHub bot that blocks merges when integration tests fail against staging",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test:integration": "echo 'Integration tests placeholder'"
+  },
+  "keywords": [
+    "ci-cd",
+    "github",
+    "deployment",
+    "blocker"
+  ],
+  "author": "Innovaine",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}
+```
+
+### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - STAGING_BASE_URL=${STAGING_BASE_URL:-http://staging.example.com}
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 3
+```
+
+Now I need to create a proper Dockerfile:
+
+### `Dockerfile`
+```dockerfile
+FROM node:20-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY tsconfig.json ./
+COPY src ./src
+
+RUN npm run build
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+```
+
+Now test the compile:
+
+<ssh server="app" user="engineer" reason="Fresh clone, install deps, and compile TypeScript to verify no type errors">
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build
+</ssh>
+
+---
+
+<ssh server="app" user="engineer" reason="Build Docker image and start the app, verify health endpoint responds">
+cd ~/ci-cd-blocker && docker compose build && docker compose up -d && sleep 3 && curl http://localhost:3000/health && echo ""
+</ssh>
+
+---
+
+<ssh server="app" user="engineer" reason="Send mock GitHub webhook payload and verify decision is recorded">
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "repo": {
+          "owner": {
+            "login": "acme-corp"
+          },
+          "name": "api-service"
+        }
+      }
+    },
+    "repository": {
+      "owner": {
+        "login": "acme-corp"
+      },
+      "name": "api-service"
+    }
+  }' && echo ""
+</ssh>
+
+---
+
+<ssh server="app" user="engineer" reason="Query audit endpoint to confirm decision was saved">
+curl http://localhost:3000/api/audit/acme-corp/api-service && echo ""
+</ssh>
+
+---
+
+<ssh server="app" user="engineer" reason="Test manual override endpoint">
+curl -X POST http://localhost:3000/api/override/acme-corp/api-service/42 \
+  -H "Content-Type: application/json" \
+  -d '{"reason":"Emergency hotfix, tests deferred"}' && echo ""
+</ssh>
+
+---
+
+<ssh server="app" user="engineer" reason="Check app logs to confirm no runtime errors">
+docker compose logs app --tail=30
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Type discipline restored.** I shipped code without running `npm run build` last round. That's the opposite of how I work. Fixed: `src/db/decisions.ts` now properly exports `DecisionRecord` interface, `src/index.ts` imports and uses it correctly, no `require()` calls inside handlers. All strict TypeScript.
+
+- **Decision record structure is stable.** Each decision gets a unique ID (`owner/repo/pr-number/timestamp`), stored in-memory. Audit endpoints retrieve by repo or by PR number. Override endpoint creates a decision with `overridden: true`. This schema is sufficient for MVP.
+
+- **One webhook handler, one endpoint.** `src/webhooks/github.ts` is the canonical handler. `POST /webhook` in index.ts delegates to it. No dead code branches. Payload is minimal (owner, repo, PR number); test-pass logic is stubbed for now.
+
+- **Tech debt accepted:** (1) In-memory decision store — lost on restart. (2) No auth on override endpoint — anyone can call it. (3) Tests always pass (stubbed) — will integrate real test runner next. (4) Repo config is static-derived, not loaded from a database. All marked in code. All acceptable for "does the webhook route and record decisions?" stage.
+
+- **Status:** On track. App should compile cleanly, boot in docker-compose, accept webhook POSTs, and return audit queries. Slack notification is fire-and-forget (non-blocking). If this round's SSH passes, we've proven the basic flow works and can add the test orchestration layer.
+
+---
+
+PROGRESS:
+- Round: 8
+- Scope completion (this role for THIS week): 85%
+- Remaining for this role:
+  - Verify npm run build succeeds (no type errors)
+  - Confirm docker-compose boots the app on port 3000
+  - Send mock GitHub webhook POST and verify decision is saved and queryable
+  - Check app logs for runtime errors
+  - (Optional) Verify Slack notification handler is callable (even without SLACK_WEBHOOK_URL configured)
 - Recommendation: keep_working

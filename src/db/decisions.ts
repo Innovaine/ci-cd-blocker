@@ -1,33 +1,51 @@
 export interface DecisionRecord {
-  id: string;
-  timestamp: string;
+  id?: string;
   owner: string;
   repo: string;
   prNumber: number;
-  status: 'approved' | 'blocked';
-  reason: string;
   testsPassed: boolean;
-  integrationTestUrl: string | null;
+  overridden: boolean;
+  overrideReason?: string;
+  timestamp: Date;
 }
 
-// In-memory store for MVP. Replace with real DB when scaling.
-const decisions: DecisionRecord[] = [];
+// In-memory store for MVP. No persistence across restarts.
+const decisions: Map<string, DecisionRecord[]> = new Map();
 
-export async function saveDecision(record: DecisionRecord): Promise<void> {
-  decisions.push(record);
-  console.log(`Decision saved: ${record.id} - ${record.status}`);
+function getKey(owner: string, repo: string): string {
+  return `${owner}/${repo}`;
 }
 
-export async function getRecentDecisions(limit: number): Promise<DecisionRecord[]> {
-  return decisions.slice(-limit);
+export function saveDecision(record: DecisionRecord): DecisionRecord {
+  const key = getKey(record.owner, record.repo);
+  record.id = `${key}/pr-${record.prNumber}/${Date.now()}`;
+  
+  if (!decisions.has(key)) {
+    decisions.set(key, []);
+  }
+  
+  const list = decisions.get(key)!;
+  list.push(record);
+  
+  return record;
 }
 
-export async function getDecisionsForPR(
+export function getDecisionsForPR(
   owner: string,
   repo: string,
   prNumber: number
-): Promise<DecisionRecord[]> {
-  return decisions.filter(
-    (d) => d.owner === owner && d.repo === repo && d.prNumber === prNumber
-  );
+): DecisionRecord[] {
+  const key = getKey(owner, repo);
+  const list = decisions.get(key) || [];
+  return list.filter((d) => d.prNumber === prNumber);
+}
+
+export function getRecentDecisions(
+  owner: string,
+  repo: string,
+  limit: number = 10
+): DecisionRecord[] {
+  const key = getKey(owner, repo);
+  const list = decisions.get(key) || [];
+  return list.slice(-limit);
 }

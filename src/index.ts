@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { handleGitHubWebhook } from './webhooks/github';
 import { notifySlack } from './slack/notifier';
+import { saveDecision, getRecentDecisions, getDecisionsForPR, DecisionRecord } from './db/decisions';
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -39,12 +40,10 @@ app.post('/webhook', async (req: Request, res: Response) => {
   }
 });
 
-// Audit endpoint: get recent decisions
+// Audit endpoint: get recent decisions for a repo
 app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
   try {
     const { owner, repo } = req.params;
-    const { getRecentDecisions } = require('./db/decisions');
-
     const decisions = getRecentDecisions(owner, repo, 10);
     res.status(200).json({
       success: true,
@@ -59,12 +58,10 @@ app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
   }
 });
 
-// Audit endpoint: get specific PR decisions
+// Audit endpoint: get decisions for a specific PR
 app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   try {
     const { owner, repo, prNumber } = req.params;
-    const { getDecisionsForPR } = require('./db/decisions');
-
     const decisions = getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
     res.status(200).json({
       success: true,
@@ -86,10 +83,8 @@ app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) =
     const { owner, repo, prNumber } = req.params;
     const { reason } = req.body;
 
-    // ASSUMPTION: No auth on this endpoint for MVP. In production, verify GitHub token or similar.
-    const { saveDecision } = require('./db/decisions');
-
-    saveDecision({
+    // ASSUMPTION: No auth on this endpoint for MVP. Add GitHub token verification in production.
+    const decision = saveDecision({
       owner,
       repo,
       prNumber: parseInt(prNumber, 10),
@@ -102,9 +97,7 @@ app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) =
     res.status(200).json({
       success: true,
       message: 'Override recorded',
-      owner,
-      repo,
-      prNumber: parseInt(prNumber, 10),
+      decision,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
