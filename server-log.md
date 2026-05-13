@@ -3498,3 +3498,132 @@ ERROR: command exited 7
 docker compose ps && docker compose logs app 2>&1 | tail -10
 ```
 ERROR: command exited 1
+
+## 2026-05-13T01:20:43.435Z — Marcus ran 9 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `4025248` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✓ exit 0, 2774ms)
+```
+cd ~/ci-cd-blocker && git pull && ls -la Dockerfile .dockerignore 2>&1 | head -10
+```
+STDOUT:
+```
+Updating d501dfc..4025248
+Fast-forward
+ docker-compose.yml        |   8 +-
+ package.json              |  12 +-
+ server-log.md             | 146 +++++++++++
+ src/config/repo-config.ts |  24 +-
+ src/db/decisions.ts       |  30 +--
+ src/index.ts              |  78 ++++--
+ src/slack/notifier.ts     |  52 +++-
+ src/test/orchestrator.ts  |  81 ++++--
+ src/test/runner.ts        |  36 +--
+ src/webhooks/github.ts    | 122 +++++++--
+ week-02/engineering.md    | 648 +++++++++++++++++++++++++++++++++++++++++++++-
+ 11 files changed, 1112 insertions(+), 125 deletions(-)
+ls: cannot access 'Dockerfile': No such file or directory
+ls: cannot access '.dockerignore': No such file or directory
+```
+
+### Command 2 on app as engineer (✗ exit 1, 1044ms)
+```
+cd ~/ci-cd-blocker && rm -rf dist node_modules && npm ci && npm run build 2>&1 | tail -30
+```
+ERROR: command exited 1
+
+### Command 3 on app as engineer (✓ exit 0, 719ms)
+```
+cd ~/ci-cd-blocker && docker compose down && docker compose build --no-cache 2>&1 | tail -40
+```
+STDOUT:
+```
+ Image ci-cd-blocker-app Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+failed to solve: failed to read dockerfile: open Dockerfile: no such file or directory
+```
+
+### Command 4 on app as engineer (✗ exit 1, 671ms)
+```
+cd ~/ci-cd-blocker && docker compose up -d && sleep 5 && docker compose ps
+```
+STDOUT:
+```
+#1 [internal] load local bake definitions
+#1 reading from stdin 508B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 5 on app as engineer (✓ exit 0, 492ms)
+```
+docker compose logs app 2>&1 | tail -50
+```
+STDOUT:
+```
+no configuration file provided: not found
+```
+
+### Command 6 on app as engineer (✗ exit 7, 449ms)
+```
+curl -s http://localhost:3000/health 2>&1
+```
+ERROR: command exited 7
+
+### Command 7 on app as engineer (✗ exit 7, 594ms)
+```
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+```
+STDOUT:
+```
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+curl: (7) Failed to connect to localhost port 3000 after 0 ms: Couldn't connect to server
+```
+ERROR: command exited 7
+
+### Command 8 on app as engineer (✗ exit 7, 449ms)
+```
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1
+```
+ERROR: command exited 7
+
+### Command 9 on app as engineer (✗ exit 7, 448ms)
+```
+curl -s http://localhost:3000/health 2>&1 && docker compose ps
+```
+ERROR: command exited 7

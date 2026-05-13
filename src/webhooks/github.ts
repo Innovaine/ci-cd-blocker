@@ -1,11 +1,11 @@
-import { RepoConfig, loadRepoConfig } from '../config/repo-config';
-import { orchestrateTests, TestContext } from '../test/orchestrator';
-import { recordDecision } from '../db/decisions';
+import { loadRepoConfig, RepoConfig } from '../config/repo-config';
+import { recordDecision, Decision } from '../db/decisions';
 import { notifySlack } from '../slack/notifier';
+import { orchestrateTests } from '../test/orchestrator';
 
-export interface GitHubPullRequestPayload {
+export interface GitHubWebhookPayload {
   action: string;
-  pull_request: {
+  pull_request?: {
     number: number;
     head: {
       sha: string;
@@ -26,91 +26,97 @@ export interface GitHubPullRequestPayload {
 }
 
 /**
- * Handle GitHub pull_request webhook event.
- * 1. Load repo config
- * 2. Orchestrate integration tests
- * 3. Record decision
- * 4. Notify Slack
- * 5. Return result
- *
- * ASSUMPTION: Tests are orchestrated synchronously. After first paying customer, add timeout + async queue.
+ * Single source of truth for GitHub webhook handling.
+ * Routes PR events to test orchestration, records decisions, sends Slack notifications.
  */
-export async function handleGitHubWebhook(payload: GitHubPullRequestPayload) {
-  const { pull_request } = payload;
-  const { number: prNumber, head, base } = pull_request;
-  const owner = base.repo.owner.login;
-  const repoName = base.repo.name;
+export async function handleGitHubWebhook(payload: GitHubWebhookPayload): Promise<any> {
+  // Only handle PR open/synchronize events
+  if (payload.action !== 'opened' && payload.action !== 'synchronize') {
+    return { ignored: true, action: payload.action };
+  }
 
-  console.log(`[github-webhook] ${owner}/${repoName}#${prNumber} opened`);
+  const pr = payload.pull_request;
+  if (!pr) {
+    return { error: 'No pull_request in payload' };
+  }
+
+  const owner = pr.base.repo.owner.login;
+  const repo = pr.base.repo.name;
+  const prNumber = pr.number;
+  const headSha = pr.head.sha;
+
+  console.log(
+    `[github] Webhook: ${owner}/${repo}#${prNumber} on ${headSha.slice(0, 7)}`
+  );
+
+  // Load repo config
+  const config = loadRepoConfig(owner, repo);
+  if (!config) {
+    console.warn(`[github] No config for ${owner}/${repo}, skipping`);
+    return { skipped: true, reason: 'No config' };
+  }
 
   try {
-    // Load config for this repo
-    const config: RepoConfig | null = loadRepoConfig(owner, repoName);
-
-    if (!config) {
-      console.warn(`[github-webhook] No config for ${owner}/${repoName}, skipping`);
-      return { blocked: false, reason: 'no-config' };
-    }
-
-    // Build test context
-    const testContext: TestContext = {
-      prNumber,
-      headSha: head.sha,
-      headRef: head.ref,
-      baseSha: base.sha,
-      baseRef: base.ref,
+    // Orchestrate integration tests
+    console.log(`[github] Running orchestration for ${owner}/${repo}#${prNumber}`);
+    const testResult = await orchestrateTests(config, {
       owner,
-      repo: repoName,
-    };
-
-    // Run tests
-    const testResult = await orchestrateTests(config, testContext);
-
-    // Determine if we should block
-    const shouldBlock = !testResult.passed;
-
-    // Record decision
-    recordDecision({
-      owner,
-      repo: repoName,
+      repo,
       prNumber,
-      decision: shouldBlock ? 'blocked' : 'approved',
-      reason: testResult.passed ? 'tests-passed' : 'tests-failed',
-      timestamp: new Date().toISOString(),
+      headSha,
     });
 
-    // Notify Slack (stub — no-op if SLACK_WEBHOOK_URL not set)
-    if (shouldBlock) {
+    // Determine decision
+    const decision: Decision = {
+      owner,
+      repo,
+      prNumber,
+      decision: testResult.success ? 'approved' : 'blocked',
+      reason: testResult.reason || 'Tests did not pass',
+      timestamp: new Date().toISOString(),
+    };
+
+    // Record decision
+    recordDecision(decision);
+
+    // Notify Slack if configured
+    if (config.notifyOn === 'always' || !testResult.success) {
       await notifySlack({
         owner,
-        repo: repoName,
+        repo,
         prNumber,
-        status: 'blocked',
-        reason: testResult.reason || 'integration tests failed',
+        status: decision.decision,
+        reason: decision.reason,
       });
     }
 
     return {
-      blocked: shouldBlock,
-      prNumber,
       owner,
-      repo: repoName,
-      testsPassed: testResult.passed,
-      reason: testResult.reason,
+      repo,
+      prNumber,
+      decision: decision.decision,
+      reason: decision.reason,
     };
   } catch (err) {
-    console.error(`[github-webhook] Error handling ${owner}/${repoName}#${prNumber}:`, err);
+    console.error(`[github] Error processing webhook:`, err);
 
-    // Record failure
-    recordDecision({
+    const errorDecision: Decision = {
       owner,
-      repo: repoName,
+      repo,
       prNumber,
       decision: 'error',
-      reason: String(err),
+      reason: `Orchestration failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
       timestamp: new Date().toISOString(),
-    });
+    };
 
-    return { blocked: false, error: String(err) };
+    recordDecision(errorDecision);
+
+    return {
+      owner,
+      repo,
+      prNumber,
+      decision: 'error',
+      reason: errorDecision.reason,
+    };
   }
 }

@@ -1,7 +1,7 @@
 export interface RepoConfig {
   owner: string;
   repo: string;
-  stagingUrl?: string;
+  stagingUrl: string;
   testCommand?: string;
   notifyOn?: 'always' | 'failure-only';
 }
@@ -11,7 +11,6 @@ export interface RepoConfig {
  * ASSUMPTION: For MVP, return a default config. After first customer, read from GitHub .innovaine.yaml.
  */
 export function loadRepoConfig(owner: string, repo: string): RepoConfig | null {
-  // ASSUMPTION: Default config is sufficient for MVP. Real repos will need their own .innovaine.yaml.
   console.log(`[repo-config] Loading config for ${owner}/${repo}`);
 
   return {
