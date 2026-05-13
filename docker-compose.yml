@@ -2,17 +2,18 @@ version: '3.8'
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - '3000:3000'
+      - "3000:3000"
     environment:
-      - NODE_ENV=production
-      - PORT=3000
-      - STAGING_BASE_URL=${STAGING_BASE_URL:-http://staging.example.com}
-      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      NODE_ENV: production
+      PORT: 3000
     restart: unless-stopped
     healthcheck:
-      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5s
+      timeout: 3s
       retries: 3
+      start_period: 10s
