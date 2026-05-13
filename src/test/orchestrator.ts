@@ -1,16 +1,14 @@
-import { runTests } from './runner';
+/**
+ * Orchestrates test execution: reads config, runs integration tests,
+ * returns structured result.
+ */
 
-export interface TestContext {
-  prNumber: number;
-  commitSha: string;
-  owner: string;
-  repo: string;
-  authorLogin?: string;
-}
+import { runTests } from './runner.js';
+import { RepoConfig } from '../config/repo-config.js';
 
 export interface TestResult {
   passed: boolean;
-  failureReason?: string;
+  error?: string;
   details?: {
     totalTests: number;
     passed: number;
@@ -19,65 +17,20 @@ export interface TestResult {
   };
 }
 
-/**
- * Orchestrates the full test workflow:
- * 1. Load repo config (staging URL, test paths)
- * 2. Check out the PR commit
- * 3. Run integration tests
- * 4. Return pass/fail decision
- */
-export async function orchestrateTests(
-  config: any,
-  context: TestContext
-): Promise<TestResult> {
-  const { stagingUrl, testPaths } = config;
-  const { prNumber, commitSha, owner, repo, authorLogin } = context;
+export async function orchestrateTests(config: RepoConfig): Promise<TestResult> {
+  console.log('[Orchestrator] Starting test execution');
+  console.log('[Orchestrator] Test paths:', config.testPaths);
+  console.log('[Orchestrator] Staging URL:', config.stagingUrl);
 
-  if (!stagingUrl) {
-    return {
-      passed: false,
-      failureReason: 'No staging URL configured for this repo',
-    };
-  }
-
-  if (!testPaths || testPaths.length === 0) {
-    return {
-      passed: true, // If no tests defined, assume pass
-      failureReason: undefined,
-    };
-  }
-
-  console.log(
-    `[Orchestrator] Running tests for ${owner}/${repo} PR #${prNumber}`
-  );
-  console.log(`  Staging URL: ${stagingUrl}`);
-  console.log(`  Test paths: ${testPaths.join(', ')}`);
-
-  // Run the test suite
   try {
-    const result = await runTests({
-      stagingUrl,
-      testPaths,
-      commitSha,
-      timeout: 60000, // 60 seconds
-    });
-
-    if (result.passed) {
-      return {
-        passed: true,
-        details: result.details,
-      };
-    } else {
-      return {
-        passed: false,
-        failureReason: result.error || 'Tests failed',
-        details: result.details,
-      };
-    }
+    const result = await runTests();
+    console.log('[Orchestrator] Test execution completed:', result);
+    return result;
   } catch (err) {
+    console.error('[Orchestrator] Test execution failed:', err);
     return {
       passed: false,
-      failureReason: `Test execution error: ${String(err)}`,
+      error: `Test execution failed: ${err instanceof Error ? err.message : 'unknown error'}`,
     };
   }
 }

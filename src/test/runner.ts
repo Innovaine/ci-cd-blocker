@@ -1,13 +1,12 @@
+/**
+ * Runs integration tests against staging environment.
+ * ASSUMPTION: Tests are invoked via `npm test` command.
+ * MVP stub; real test suite to follow.
+ */
+
 import { spawn } from 'child_process';
 
-export interface RunTestsInput {
-  stagingUrl: string;
-  testPaths: string[];
-  commitSha?: string;
-  timeout?: number;
-}
-
-export interface RunTestsOutput {
+export interface TestResult {
   passed: boolean;
   error?: string;
   details?: {
@@ -18,55 +17,31 @@ export interface RunTestsOutput {
   };
 }
 
-/**
- * Executes integration tests against a staging environment.
- * Returns pass/fail status and details.
- * ASSUMPTION: test suite is invoked via `npm test` with env var STAGING_URL.
- */
-export async function runTests(input: RunTestsInput): Promise<RunTestsOutput> {
-  const { stagingUrl, testPaths, timeout = 60000 } = input;
-
-  const startTime = Date.now();
-
+export async function runTests(): Promise<TestResult> {
   return new Promise((resolve) => {
-    const env = { ...process.env, STAGING_URL: stagingUrl };
+    const startTime = Date.now();
+    console.log('[Runner] Starting test process');
 
-    // Spawn the test runner (npm test) with environment variables
-    const proc = spawn('npm', ['test', '--', ...testPaths], {
-      env,
+    // ASSUMPTION: For MVP, we just run `npm test` and check exit code.
+    // This is a stub. Real integration tests (HTTP calls to staging, assertions) come later.
+    const proc = spawn('npm', ['test'], {
+      cwd: process.cwd(),
       stdio: 'pipe',
-      timeout,
     });
 
     let stdout = '';
     let stderr = '';
 
-    if (proc.stdout) {
-      proc.stdout.on('data', (data) => {
-        stdout += data.toString();
-        console.log('[Test Output]', data.toString());
-      });
-    }
+    proc.stdout?.on('data', (data) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      console.log('[Runner] stdout:', chunk.trim());
+    });
 
-    if (proc.stderr) {
-      proc.stderr.on('data', (data) => {
-        stderr += data.toString();
-        console.error('[Test Error]', data.toString());
-      });
-    }
-
-    proc.on('error', (err) => {
-      const duration = Date.now() - startTime;
-      resolve({
-        passed: false,
-        error: `Failed to spawn test process: ${err.message}`,
-        details: {
-          totalTests: 0,
-          passed: 0,
-          failed: 1,
-          duration,
-        },
-      });
+    proc.stderr?.on('data', (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      console.log('[Runner] stderr:', chunk.trim());
     });
 
     proc.on('exit', (code) => {

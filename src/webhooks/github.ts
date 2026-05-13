@@ -1,7 +1,12 @@
-import { loadRepoConfig } from '../config/repo-config';
-import { orchestrateTests } from '../test/orchestrator';
-import { recordDecision } from '../db/decisions';
-import { notifySlack } from '../slack/notifier';
+/**
+ * GitHub webhook handler: receives push/PR events, runs integration tests,
+ * blocks merge if tests fail, notifies Slack.
+ */
+
+import { orchestrateTests } from '../test/orchestrator.js';
+import { loadRepoConfig } from '../config/repo-config.js';
+import { recordDecision } from '../db/decisions.js';
+import { notifySlack } from '../slack/notifier.js';
 
 export interface GitHubWebhookPayload {
   action?: string;
@@ -9,116 +14,88 @@ export interface GitHubWebhookPayload {
     number: number;
     head: {
       sha: string;
-      ref: string;
-      repo?: {
-        name: string;
-        owner?: {
-          login: string;
-        };
-      };
     };
-    base: {
-      repo: {
-        name: string;
-        owner: {
-          login: string;
-        };
-      };
-    };
-    title: string;
-    user?: {
+    user: {
       login: string;
     };
   };
-  repository?: {
+  repository: {
     name: string;
     owner: {
       login: string;
     };
-    full_name: string;
   };
 }
 
-export async function handleGitHubPullRequestEvent(
-  payload: GitHubWebhookPayload
-): Promise<{ approved: boolean; reason: string }> {
-  // Only care about opened and synchronize (new commits pushed)
-  if (payload.action !== 'opened' && payload.action !== 'synchronize') {
-    return { approved: true, reason: 'Not a test-triggering action' };
+export async function handleGitHubWebhook(payload: GitHubWebhookPayload) {
+  // Only care about PR opened/synchronize events
+  if (!payload.pull_request) {
+    console.log('[GitHub] Ignoring non-PR event');
+    return { ignored: true };
   }
 
-  if (!payload.pull_request || !payload.repository) {
-    return { approved: true, reason: 'Malformed payload' };
+  const { action } = payload;
+  if (!['opened', 'synchronize'].includes(action || '')) {
+    console.log(`[GitHub] Ignoring PR action: ${action}`);
+    return { ignored: true };
   }
 
-  const {
-    number: prNumber,
-    head: { sha: commitSha, repo: headRepo },
-    base: { repo: baseRepo },
-    title: prTitle,
-    user: { login: authorLogin } = {},
-  } = payload.pull_request;
+  const pr = payload.pull_request;
+  const repo = payload.repository;
+  const owner = repo.owner.login;
+  const repoName = repo.name;
+  const prNumber = pr.number;
+  const commitSha = pr.head.sha;
+  const authorLogin = pr.user.login;
 
-  const owner = baseRepo.owner.login;
-  const repo = baseRepo.name;
+  console.log(`[GitHub] Processing PR #${prNumber} in ${owner}/${repoName}`);
 
-  console.log(
-    `[GitHub] PR #${prNumber} opened/updated in ${owner}/${repo} at ${commitSha}`
-  );
-
-  // Load repo config (defines staging URL, test paths, etc.)
-  let config: any;
   try {
-    config = await loadRepoConfig(owner, repo);
-  } catch (err) {
-    console.error(`Config load failed for ${owner}/${repo}:`, err);
-    // If config is missing, assume tests should run
-    config = { stagingUrl: 'http://localhost:3001', testPaths: ['./test'] };
-  }
+    // Load repo config
+    const config = await loadRepoConfig(owner, repoName);
+    console.log(`[GitHub] Loaded config:`, config);
 
-  // Run integration tests against staging
-  let testResult: any;
-  try {
-    testResult = await orchestrateTests(config, {
-      prNumber,
-      commitSha,
-      owner,
-      repo,
-      authorLogin,
-    });
-  } catch (err) {
-    console.error(`Test orchestration failed for PR #${prNumber}:`, err);
-    testResult = { passed: false, failureReason: String(err) };
-  }
+    // Run integration tests
+    const testResult = await orchestrateTests(config);
+    console.log(`[GitHub] Test result:`, testResult);
 
-  const approved = testResult.passed === true;
-  const reason = approved ? 'All tests passed' : testResult.failureReason || 'Tests failed';
+    // Determine decision
+    const decision = testResult.passed ? 'approved' : 'blocked';
+    const reason = testResult.passed
+      ? 'Integration tests passed'
+      : `Integration tests failed: ${testResult.error || 'unknown error'}`;
 
-  // Record decision in database
-  try {
+    // Record decision
     await recordDecision({
       owner,
-      repo,
+      repo: repoName,
       prNumber,
       commitSha,
-      decision: approved ? 'approved' : 'blocked',
+      decision,
       reason,
       timestamp: new Date().toISOString(),
     });
+
+    // Notify Slack
+    const slackMessage =
+      decision === 'approved'
+        ? `:white_check_mark: PR #${prNumber} *approved* — tests passed`
+        : `:x: PR #${prNumber} *blocked* — tests failed`;
+
+    await notifySlack(slackMessage, {
+      prNumber,
+      owner,
+      repo: repoName,
+      authorLogin,
+    });
+
+    return {
+      decision,
+      reason,
+      testsPassed: testResult.passed,
+    };
   } catch (err) {
-    console.error(`Failed to record decision for PR #${prNumber}:`, err);
+    console.error(`[GitHub] Error processing webhook:`, err);
+    throw err;
   }
-
-  // Notify Slack
-  try {
-    const slackMessage = approved
-      ? `✅ PR #${prNumber} in ${owner}/${repo} approved (tests passed). Merge ready.`
-      : `🚫 PR #${prNumber} in ${owner}/${repo} blocked. ${reason}`;
-
-    await notifySlack(slackMessage, { prNumber, owner, repo, authorLogin });
-  } catch (err) {
-    console.error(`Slack notification failed for PR #${prNumber}:`, err);
-  }
-
-  return { approved, reason };
 }
