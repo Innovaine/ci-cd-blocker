@@ -1,42 +1,33 @@
-/**
- * Stores and retrieves CI/CD blocking decisions.
- * ASSUMPTION: Using in-memory store for MVP. In production, use a real database.
- */
-
-export interface Decision {
+export interface DecisionRecord {
+  id: string;
+  timestamp: string;
   owner: string;
   repo: string;
   prNumber: number;
-  commitSha: string;
-  decision: 'approved' | 'blocked' | 'overridden';
+  status: 'approved' | 'blocked';
   reason: string;
-  timestamp: string;
+  testsPassed: boolean;
+  integrationTestUrl: string | null;
 }
 
-// In-memory store (ephemeral across restarts; OK for MVP)
-const decisionsStore: Decision[] = [];
+// In-memory store for MVP. Replace with real DB when scaling.
+const decisions: DecisionRecord[] = [];
 
-export async function recordDecision(decision: Decision): Promise<void> {
-  decisionsStore.push(decision);
-  console.log(`[DB] Recorded decision for ${decision.owner}/${decision.repo} PR #${decision.prNumber}`);
+export async function saveDecision(record: DecisionRecord): Promise<void> {
+  decisions.push(record);
+  console.log(`Decision saved: ${record.id} - ${record.status}`);
+}
+
+export async function getRecentDecisions(limit: number): Promise<DecisionRecord[]> {
+  return decisions.slice(-limit);
 }
 
 export async function getDecisionsForPR(
   owner: string,
   repo: string,
   prNumber: number
-): Promise<Decision[]> {
-  return decisionsStore.filter(
+): Promise<DecisionRecord[]> {
+  return decisions.filter(
     (d) => d.owner === owner && d.repo === repo && d.prNumber === prNumber
   );
-}
-
-export async function getRecentDecisions(
-  owner: string,
-  repo: string,
-  limit: number = 50
-): Promise<Decision[]> {
-  return decisionsStore
-    .filter((d) => d.owner === owner && d.repo === repo)
-    .slice(-limit);
 }

@@ -1,10 +1,8 @@
 import type { RepoConfig } from '../config/repo-config.js';
 import { loadRepoConfig } from '../config/repo-config.js';
-import {
-  saveDecision,
-  DecisionRecord,
-} from '../db/decisions.js';
-import { orchestrateTests, TestContext } from '../test/orchestrator.js';
+import { saveDecision } from '../db/decisions.js';
+import type { DecisionRecord } from '../db/decisions.js';
+import { orchestrateTests } from '../test/orchestrator.js';
 
 export interface WebhookPayload {
   action?: string;
@@ -55,20 +53,18 @@ export async function handleGitHubWebhook(
   }
 
   try {
-    // Load repo-specific config (e.g., staging URL, integration test command).
+    // Load repo-specific config (staging URL, integration test command, etc.).
     const config = await loadRepoConfig(owner, repo);
 
-    // Orchestrate integration tests against the staging environment.
-    const testContext: TestContext = {
+    // Run integration tests against the staging environment.
+    const testResult = await orchestrateTests({
       prNumber,
       owner,
       repo,
       stagingUrl: config.stagingUrl,
-    };
+    });
 
-    const testResult = await orchestrateTests(config, testContext);
-
-    // Record the decision in the database.
+    // Record the decision.
     const decision: DecisionRecord = {
       id: `gh-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -76,16 +72,17 @@ export async function handleGitHubWebhook(
       repo,
       prNumber,
       status: testResult.passed ? 'approved' : 'blocked',
-      reason: testResult.passed ? 'All tests passed' : testResult.error || 'Tests failed',
+      reason: testResult.passed ? 'All tests passed' : testResult.error || 'Integration tests failed',
       testsPassed: testResult.passed,
       integrationTestUrl: config.stagingUrl,
     };
 
-    saveDecision(decision);
+    await saveDecision(decision);
 
     return { success: true, decision };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Webhook error for ${owner}/${repo}#${prNumber}:`, errorMessage);
     return { success: false, error: errorMessage };
   }
 }

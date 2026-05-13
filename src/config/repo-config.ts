@@ -1,27 +1,27 @@
-/**
- * Loads per-repo configuration for CI/CD blocking rules.
- * ASSUMPTION: config is stored as a JSON file in the GitHub repo root (.github/ci-cd-config.json)
- * or defaults to sensible defaults if missing.
- */
-
 export interface RepoConfig {
+  owner: string;
+  repo: string;
   stagingUrl: string;
-  testPaths: string[];
-  notifyChannel?: string;
-  blockOnTestFailure: boolean;
-  allowManualOverride: boolean;
+  integrationTestCommand?: string;
 }
 
-const DEFAULT_CONFIG: RepoConfig = {
-  stagingUrl: 'http://localhost:3001',
-  testPaths: ['./test', './tests', './integration-tests'],
-  blockOnTestFailure: true,
-  allowManualOverride: true,
-};
-
+/**
+ * Load repo-specific configuration.
+ * 
+ * ASSUMPTION: For MVP, we return a default config with a hardcoded staging URL.
+ * In production, this would:
+ *   1. Check a config file in the repo (.ci-cd-blocker.json or similar)
+ *   2. Fall back to a database of org-level settings
+ *   3. Cache the result to avoid repeated I/O
+ */
 export async function loadRepoConfig(owner: string, repo: string): Promise<RepoConfig> {
-  // ASSUMPTION: config is sourced from repo's .github/ci-cd-config.json
-  // For MVP, we return defaults. In future, fetch from GitHub API or clone the repo.
-  console.log(`[Config] Loading config for ${owner}/${repo}`);
-  return DEFAULT_CONFIG;
+  // ASSUMPTION: Staging URL is derived from repo name. Real implementation would read from config file.
+  const stagingUrl = `https://${repo}-staging.example.com`;
+
+  return {
+    owner,
+    repo,
+    stagingUrl,
+    integrationTestCommand: 'npm test',
+  };
 }

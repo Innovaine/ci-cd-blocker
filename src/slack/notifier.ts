@@ -1,70 +1,31 @@
 /**
- * Sends notifications to Slack about CI/CD blocking decisions.
- * ASSUMPTION: Slack webhook URL is set via env var SLACK_WEBHOOK_URL.
+ * Send notifications to Slack.
+ * 
+ * ASSUMPTION: Slack webhook URL is provided via SLACK_WEBHOOK_URL environment variable.
+ * If not set, notifications are logged but not sent (silent fail for MVP).
  */
-
-export interface SlackNotifyInput {
-  prNumber: number;
-  owner: string;
-  repo: string;
-  authorLogin?: string;
-}
-
-export async function notifySlack(
-  message: string,
-  context: SlackNotifyInput
-): Promise<void> {
+export async function notifySlack(message: string): Promise<void> {
   const webhookUrl = process.env.SLACK_WEBHOOK_URL;
 
   if (!webhookUrl) {
-    console.warn('[Slack] No webhook URL set; skipping notification');
+    console.log(`[Slack] Webhook URL not configured. Message not sent: ${message}`);
     return;
   }
-
-  const payload = {
-    text: message,
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: message,
-        },
-      },
-      {
-        type: 'section',
-        fields: [
-          {
-            type: 'mrkdwn',
-            text: `*Repo:*\n${context.owner}/${context.repo}`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*PR:*\n#${context.prNumber}`,
-          },
-          {
-            type: 'mrkdwn',
-            text: `*Author:*\n${context.authorLogin || 'unknown'}`,
-          },
-        ],
-      },
-    ],
-  };
 
   try {
     const response = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ text: message }),
     });
 
     if (!response.ok) {
-      console.error(`[Slack] Webhook failed: ${response.status}`);
-      return;
+      console.warn(`[Slack] Failed to send notification. Status: ${response.status}`);
+    } else {
+      console.log(`[Slack] Notification sent: ${message}`);
     }
-
-    console.log(`[Slack] Notification sent for PR #${context.prNumber}`);
-  } catch (err) {
-    console.error(`[Slack] Failed to send notification:`, err);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(`[Slack] Notification failed: ${errorMessage}`);
   }
 }

@@ -1,5 +1,3 @@
-import type { RepoConfig } from '../config/repo-config.js';
-
 export interface TestContext {
   prNumber: number;
   owner: string;
@@ -15,21 +13,39 @@ export interface TestResult {
 /**
  * Orchestrate integration tests against the staging environment.
  * 
- * ASSUMPTION: For MVP, this is a stub that always returns passed=true.
- * In the next round, this will:
- *   1. Run HTTP calls to the staging URL
- *   2. Assert that expected endpoints respond with correct status codes
- *   3. Return detailed results
+ * ASSUMPTION: For MVP, this makes a simple HTTP GET request to the staging URL
+ * and checks that it returns 2xx. In the next iteration, this will:
+ *   1. Parse repo config for specific endpoints to test
+ *   2. Run a series of HTTP assertions
+ *   3. Return detailed results per endpoint
  */
-export async function orchestrateTests(
-  config: RepoConfig,
-  context: TestContext
-): Promise<TestResult> {
+export async function orchestrateTests(context: TestContext): Promise<TestResult> {
+  const { owner, repo, prNumber, stagingUrl } = context;
+
   console.log(
-    `Running integration tests for ${context.owner}/${context.repo}#${context.prNumber} against ${context.stagingUrl}`
+    `[Integration Test] Running for ${owner}/${repo}#${prNumber} against ${stagingUrl}`
   );
 
-  // STUB: Always pass for now.
-  // In production, call actual HTTP endpoints on stagingUrl and verify responses.
-  return { passed: true };
+  try {
+    // Simple health check: GET stagingUrl and expect 2xx.
+    const response = await fetch(stagingUrl, {
+      method: 'GET',
+      timeout: 10000,
+    });
+
+    if (response.ok) {
+      console.log(
+        `[Integration Test] PASSED: ${stagingUrl} returned ${response.status}`
+      );
+      return { passed: true };
+    } else {
+      const error = `Staging server returned ${response.status}`;
+      console.log(`[Integration Test] FAILED: ${error}`);
+      return { passed: false, error };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.log(`[Integration Test] ERROR: ${errorMessage}`);
+    return { passed: false, error: `Integration test execution failed: ${errorMessage}` };
+  }
 }

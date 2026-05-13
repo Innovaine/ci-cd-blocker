@@ -2371,3 +2371,39 @@ found 0 vulnerabilities
 > ci-cd-blocker@0.2.0 build
 > tsc
 ```
+
+## 2026-05-13T00:58:52.786Z — Marcus ran 1 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `174d90f` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 2, 4933ms)
+```
+cd ~
+rm -rf ci-cd-blocker
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+```
+STDOUT:
+```
+
+added 99 packages, and audited 100 packages in 1s
+
+15 packages are looking for funding
+  run `npm fund` for details
+
+found 0 vulnerabilities
+
+> ci-cd-blocker@0.2.0 build
+> tsc
+
+src/index.ts(6,3): error TS2724: '"./db/decisions.js"' has no exported member named 'saveDecision'. Did you mean 'Decision'?
+src/index.ts(9,3): error TS2305: Module '"./db/decisions.js"' has no exported member 'DecisionRecord'.
+src/index.ts(31,15): error TS2554: Expected 2 arguments, but got 1.
+src/index.ts(53,21): error TS2554: Expected 2-3 arguments, but got 1.
+src/index.ts(54,30): error TS2339: Property 'filter' does not exist on type 'Promise<Decision[]>'.
+src/index.ts(55,6): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/webhooks/github.ts(4,3): error TS2724: '"../db/decisions.js"' has no exported member named 'saveDecision'. Did you mean 'Decision'?
+src/webhooks/github.ts(5,3): error TS2305: Module '"../db/decisions.js"' has no exported member 'DecisionRecord'.
+```
+ERROR: command exited 2

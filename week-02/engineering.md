@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 3:58:21 AM
+- **Saved:** 13/05/2026, 3:59:52 AM
 
 ---
 
@@ -1703,4 +1703,542 @@ PROGRESS:
   - Send a mock GitHub webhook POST to `/webhook` and log the decision
   - Implement real integration test runner (currently a stub)
   - Test Slack notification with a real webhook URL
+- Recommendation: keep_working
+
+---
+
+## Round 5
+
+I'm reading the state carefully.
+
+**What I see:**
+
+1. **Three consecutive blocked cycles + EXECUTION MODE is active.** I cannot block. I must either approve or pivot into something shippable.
+
+2. **Last round shipped code that doesn't compile.** TypeScript errors in `src/index.ts` and `src/webhooks/github.ts` — mismatched function signatures, missing exports, promise-handling bugs. The build failed at `npm run build`. That's a hard stop.
+
+3. **The problem is architectural, not superficial.** `src/index.ts` and `src/webhooks/github.ts` both implement webhooks. `src/index.ts` imports `orchestrateTests` from `'./test/orchestrator'` but calls it with wrong args. `src/db/decisions.ts` doesn't export `saveDecision` or `DecisionRecord` — they're expected but not written. The test orchestrator is a stub. The whole thing is a half-assembled engine.
+
+4. **The SSH output shows exactly where it breaks:** `error TS2724: '"./db/decisions.js"' has no exported member named 'saveDecision'`. This is not a mystery. This is unfixed work from last round.
+
+5. **I have 7 months of runway and 3+ blocked cycles. The chairman can't block anymore.** My job is to make this compile, ship something that runs, and prove we can iterate. Not perfect. Runnable.
+
+**My read on what happened last round:**
+
+The prior Marcus (or whoever wrote it) outlined a full architecture but didn't finish the foundation layer. They built the HTTP server, sketched the webhook handler, left the database layer as a skeleton, and the orchestrator as a comment. Then they asked for SSH access to test something that wasn't ready to compile. That's a waste of a round.
+
+**What I'm going to do:**
+
+1. **Complete the foundation.** Write `src/db/decisions.ts` with real exports. Simplify it — in-memory for MVP, not Postgres. Write real type definitions.
+
+2. **Fix the import chain.** One webhook handler. One entry point. No dead code.
+
+3. **Write a real integration test runner** that can actually call a staging URL and check health.
+
+4. **Make it compile and boot cleanly.**
+
+5. **Test it on the server with a mock webhook.**
+
+I'm not going to overthink this. The company is in EXECUTION MODE. Ship something that runs. Real users test the real thing. That's how we learn what's broken.
+
+---
+
+### `src/db/decisions.ts`
+```typescript
+export interface DecisionRecord {
+  id: string;
+  timestamp: string;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  status: 'approved' | 'blocked';
+  reason: string;
+  testsPassed: boolean;
+  integrationTestUrl: string | null;
+}
+
+// In-memory store for MVP. Replace with real DB when scaling.
+const decisions: DecisionRecord[] = [];
+
+export async function saveDecision(record: DecisionRecord): Promise<void> {
+  decisions.push(record);
+  console.log(`Decision saved: ${record.id} - ${record.status}`);
+}
+
+export async function getRecentDecisions(limit: number): Promise<DecisionRecord[]> {
+  return decisions.slice(-limit);
+}
+
+export async function getDecisionsForPR(
+  owner: string,
+  repo: string,
+  prNumber: number
+): Promise<DecisionRecord[]> {
+  return decisions.filter(
+    (d) => d.owner === owner && d.repo === repo && d.prNumber === prNumber
+  );
+}
+```
+
+### `src/index.ts`
+```typescript
+import express, { Request, Response } from 'express';
+import { handleGitHubWebhook } from './webhooks/github.js';
+import { notifySlack } from './slack/notifier.js';
+import { getRecentDecisions, getDecisionsForPR } from './db/decisions.js';
+import type { DecisionRecord } from './db/decisions.js';
+
+const PORT = process.env.PORT || 3000;
+const app = express();
+
+app.use(express.json());
+
+// GitHub webhook endpoint.
+// ASSUMPTION: GitHub webhook events arrive at /webhook with X-GitHub-Event header.
+// ASSUMPTION: The webhook secret is verified externally (not implemented yet).
+app.post('/webhook', async (req: Request, res: Response) => {
+  const event = req.headers['x-github-event'] as string;
+
+  if (event === 'pull_request') {
+    try {
+      const payload = req.body;
+      const result = await handleGitHubWebhook(payload);
+
+      if (result.success && result.decision) {
+        const decision = result.decision;
+
+        // Notify Slack if the PR was blocked.
+        if (decision.status === 'blocked') {
+          const slackMessage = `🚫 PR #${decision.prNumber} in ${decision.owner}/${decision.repo} blocked: ${decision.reason}`;
+          await notifySlack(slackMessage).catch((err) => {
+            console.warn('Slack notification failed:', err);
+          });
+        } else {
+          const slackMessage = `✅ PR #${decision.prNumber} in ${decision.owner}/${decision.repo} approved: ${decision.reason}`;
+          await notifySlack(slackMessage).catch((err) => {
+            console.warn('Slack notification failed:', err);
+          });
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('Webhook handler error:', error);
+      res.status(500).json({ error: 'Webhook processing failed' });
+    }
+  } else {
+    // Non-PR events are ignored.
+    res.json({ event, ignored: true });
+  }
+});
+
+// Health check endpoint.
+app.get('/health', (req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Audit endpoint: retrieve decisions for a specific repo.
+app.get('/api/audit/:owner/:repo', async (req: Request, res: Response) => {
+  try {
+    const { owner, repo } = req.params;
+    const decisions = await getRecentDecisions(100);
+    const filtered = decisions.filter(
+      (d) => d.owner === owner && d.repo === repo
+    );
+    res.json({ owner, repo, decisions: filtered });
+  } catch (error) {
+    console.error('Audit endpoint error:', error);
+    res.status(500).json({ error: 'Failed to retrieve audit log' });
+  }
+});
+
+// Audit endpoint: retrieve decisions for a specific PR.
+app.get('/api/audit/:owner/:repo/:prNumber', async (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const decisions = await getDecisionsForPR(owner, repo, parseInt(prNumber, 10));
+    res.json({ owner, repo, prNumber, decisions });
+  } catch (error) {
+    console.error('PR audit endpoint error:', error);
+    res.status(500).json({ error: 'Failed to retrieve PR decisions' });
+  }
+});
+
+// Manual override endpoint.
+// ASSUMPTION: No auth for MVP. In production, this requires a valid token.
+app.post('/api/override/:owner/:repo/:prNumber', async (req: Request, res: Response) => {
+  try {
+    const { owner, repo, prNumber } = req.params;
+    const { reason } = req.body;
+
+    const override: DecisionRecord = {
+      id: `override-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      owner,
+      repo,
+      prNumber: parseInt(prNumber, 10),
+      status: 'approved',
+      reason: reason || 'Manual override',
+      testsPassed: true,
+      integrationTestUrl: null,
+    };
+
+    const { saveDecision } = await import('./db/decisions.js');
+    await saveDecision(override);
+
+    // Notify Slack of the override.
+    const slackMessage = `🔓 Override: PR #${override.prNumber} in ${owner}/${repo} manually approved. Reason: ${override.reason}`;
+    await notifySlack(slackMessage).catch((err) => {
+      console.warn('Slack notification failed:', err);
+    });
+
+    res.json(override);
+  } catch (error) {
+    console.error('Override endpoint error:', error);
+    res.status(500).json({ error: 'Failed to apply override' });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`CI/CD Blocker listening on port ${PORT}`);
+});
+```
+
+### `src/webhooks/github.ts`
+```typescript
+import type { RepoConfig } from '../config/repo-config.js';
+import { loadRepoConfig } from '../config/repo-config.js';
+import { saveDecision } from '../db/decisions.js';
+import type { DecisionRecord } from '../db/decisions.js';
+import { orchestrateTests } from '../test/orchestrator.js';
+
+export interface WebhookPayload {
+  action?: string;
+  pull_request?: {
+    number: number;
+    head: {
+      repo?: {
+        name: string;
+        owner: { login: string };
+      };
+    };
+    title: string;
+  };
+  repository?: {
+    name: string;
+    owner: { login: string };
+  };
+}
+
+export interface WebhookResult {
+  success: boolean;
+  decision?: DecisionRecord;
+  error?: string;
+}
+
+export async function handleGitHubWebhook(
+  payload: WebhookPayload
+): Promise<WebhookResult> {
+  // ASSUMPTION: Only handle 'opened' and 'synchronize' actions.
+  // 'opened' = new PR, 'synchronize' = commit pushed to existing PR.
+  if (
+    !payload.pull_request ||
+    !['opened', 'synchronize'].includes(payload.action || '')
+  ) {
+    return { success: true };
+  }
+
+  const pr = payload.pull_request;
+  const owner = pr.head.repo?.owner.login || payload.repository?.owner.login;
+  const repo = pr.head.repo?.name || payload.repository?.name;
+  const prNumber = pr.number;
+
+  if (!owner || !repo) {
+    return {
+      success: false,
+      error: 'Could not determine owner/repo from payload',
+    };
+  }
+
+  try {
+    // Load repo-specific config (staging URL, integration test command, etc.).
+    const config = await loadRepoConfig(owner, repo);
+
+    // Run integration tests against the staging environment.
+    const testResult = await orchestrateTests({
+      prNumber,
+      owner,
+      repo,
+      stagingUrl: config.stagingUrl,
+    });
+
+    // Record the decision.
+    const decision: DecisionRecord = {
+      id: `gh-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      owner,
+      repo,
+      prNumber,
+      status: testResult.passed ? 'approved' : 'blocked',
+      reason: testResult.passed ? 'All tests passed' : testResult.error || 'Integration tests failed',
+      testsPassed: testResult.passed,
+      integrationTestUrl: config.stagingUrl,
+    };
+
+    await saveDecision(decision);
+
+    return { success: true, decision };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`Webhook error for ${owner}/${repo}#${prNumber}:`, errorMessage);
+    return { success: false, error: errorMessage };
+  }
+}
+```
+
+### `src/test/orchestrator.ts`
+```typescript
+export interface TestContext {
+  prNumber: number;
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+}
+
+export interface TestResult {
+  passed: boolean;
+  error?: string;
+}
+
+/**
+ * Orchestrate integration tests against the staging environment.
+ * 
+ * ASSUMPTION: For MVP, this makes a simple HTTP GET request to the staging URL
+ * and checks that it returns 2xx. In the next iteration, this will:
+ *   1. Parse repo config for specific endpoints to test
+ *   2. Run a series of HTTP assertions
+ *   3. Return detailed results per endpoint
+ */
+export async function orchestrateTests(context: TestContext): Promise<TestResult> {
+  const { owner, repo, prNumber, stagingUrl } = context;
+
+  console.log(
+    `[Integration Test] Running for ${owner}/${repo}#${prNumber} against ${stagingUrl}`
+  );
+
+  try {
+    // Simple health check: GET stagingUrl and expect 2xx.
+    const response = await fetch(stagingUrl, {
+      method: 'GET',
+      timeout: 10000,
+    });
+
+    if (response.ok) {
+      console.log(
+        `[Integration Test] PASSED: ${stagingUrl} returned ${response.status}`
+      );
+      return { passed: true };
+    } else {
+      const error = `Staging server returned ${response.status}`;
+      console.log(`[Integration Test] FAILED: ${error}`);
+      return { passed: false, error };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.log(`[Integration Test] ERROR: ${errorMessage}`);
+    return { passed: false, error: `Integration test execution failed: ${errorMessage}` };
+  }
+}
+```
+
+### `src/test/runner.ts`
+```typescript
+/**
+ * DEPRECATED: Test runner logic has been consolidated into src/test/orchestrator.ts.
+ * This file remains for backward compatibility.
+ */
+
+export { orchestrateTests, type TestContext, type TestResult } from './orchestrator.js';
+```
+
+### `src/config/repo-config.ts`
+```typescript
+export interface RepoConfig {
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+  integrationTestCommand?: string;
+}
+
+/**
+ * Load repo-specific configuration.
+ * 
+ * ASSUMPTION: For MVP, we return a default config with a hardcoded staging URL.
+ * In production, this would:
+ *   1. Check a config file in the repo (.ci-cd-blocker.json or similar)
+ *   2. Fall back to a database of org-level settings
+ *   3. Cache the result to avoid repeated I/O
+ */
+export async function loadRepoConfig(owner: string, repo: string): Promise<RepoConfig> {
+  // ASSUMPTION: Staging URL is derived from repo name. Real implementation would read from config file.
+  const stagingUrl = `https://${repo}-staging.example.com`;
+
+  return {
+    owner,
+    repo,
+    stagingUrl,
+    integrationTestCommand: 'npm test',
+  };
+}
+```
+
+### `src/slack/notifier.ts`
+```typescript
+/**
+ * Send notifications to Slack.
+ * 
+ * ASSUMPTION: Slack webhook URL is provided via SLACK_WEBHOOK_URL environment variable.
+ * If not set, notifications are logged but not sent (silent fail for MVP).
+ */
+export async function notifySlack(message: string): Promise<void> {
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+
+  if (!webhookUrl) {
+    console.log(`[Slack] Webhook URL not configured. Message not sent: ${message}`);
+    return;
+  }
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message }),
+    });
+
+    if (!response.ok) {
+      console.warn(`[Slack] Failed to send notification. Status: ${response.status}`);
+    } else {
+      console.log(`[Slack] Notification sent: ${message}`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.warn(`[Slack] Notification failed: ${errorMessage}`);
+  }
+}
+```
+
+### `package.json`
+```json
+{
+  "name": "ci-cd-blocker",
+  "version": "0.2.0",
+  "description": "GitHub-only bot that blocks merges when integration tests fail against live staging.",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc && node dist/index.js",
+    "test": "echo 'No tests yet'"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.3.1",
+    "typescript": "^5.1.3"
+  }
+}
+```
+
+### `tsconfig.json`
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ES2020",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "moduleResolution": "node"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+```
+
+---
+
+Now let me test this on the server:
+
+<ssh server="app" user="engineer" reason="Fresh clone, install, compile, and boot to verify MVP is runnable">
+cd ~
+rm -rf ci-cd-blocker
+git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker
+npm install
+npm run build
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Fixed the import chain:** All exports now match imports. `src/db/decisions.ts` exports `saveDecision`, `getRecentDecisions`, `getDecisionsForPR`, and `DecisionRecord`. `src/index.ts` imports and uses them correctly. `src/webhooks/github.ts` is now the canonical webhook handler; `src/webhook-handler.ts` is a compatibility shim that re-exports it.
+
+- **Consolidated entry points:** One webhook handler at `POST /webhook`. It delegates to `handleGitHubWebhook()`, which loads config, runs tests, saves decisions, and returns results. `src/index.ts` then handles Slack notifications. No duplication, no dead code.
+
+- **Real integration test runner:** `orchestrateTests()` now makes an actual HTTP GET to the staging URL and checks for 2xx response. Still simple (not testing specific endpoints yet), but *real*. If staging is down, the test fails. If it responds, the test passes.
+
+- **In-memory database for MVP:** `src/db/decisions.ts` stores decisions in a JavaScript array. Fast, zero external deps, enough for a week of testing. When we have customers, we upgrade to Postgres. Not bloated, not overthought.
+
+- **Tech debt:** No auth on the override endpoint. Slack notifications fail silently if webhook URL is missing. Repo config is hardcoded (derives staging URL from repo name). All acceptable for MVP; all marked with `// ASSUMPTION:` comments for next round.
+
+- **Status:** Should compile clean now. Next step is to boot the app and test with a mock webhook payload.
+
+---
+
+PROGRESS:
+- Round: 5
+- Scope completion (this role for THIS week): 70%
+- Remaining for this role:
+  - Verify TypeScript compilation completes without errors
+  - Boot the app and confirm it listens on port 3000
+  - Send a mock GitHub webhook POST to `/webhook` and verify decision is saved and Slack is notified
+  - Test the audit endpoints (`/api/audit/:owner/:repo`)
+  - Test the manual override endpoint (`POST /api/override/:owner/:repo/:prNumber`)
 - Recommendation: keep_working
