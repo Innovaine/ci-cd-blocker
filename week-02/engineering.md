@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:17:35 AM
+- **Saved:** 13/05/2026, 4:18:33 AM
 
 ---
 
@@ -6440,4 +6440,145 @@ PROGRESS:
   - Verify Docker build completes without errors
   - Test webhook POST → orchestration → decision record → audit GET flow
   - Confirm health endpoint works and logs show no runtime crashes
+- Recommendation: keep_working
+
+---
+
+## Round 18
+
+I'm reading the situation carefully.
+
+**State:**
+- EXECUTION MODE active — 3 consecutive blocked cycles. Chair can't block, must approve or pivot.
+- Runway: 7 months. Execution fatigue: 80/100. This is cycle 2, week 2.
+- I've already shipped 11 files. Previous round: Docker build succeeded (`npm run build` exited 0). Now I test the running app.
+
+**What I see:**
+The CTO flagged critical import mismatches and routing ambiguity. Last round's SSH showed `npm run build` passed — that means TypeScript compiled. But "compiles" ≠ "works at runtime". I need to:
+
+1. Pull fresh code
+2. Start the container
+3. Test the webhook endpoint with a real payload
+4. Verify the app doesn't crash when orchestration runs
+5. Check that decisions are recorded and auditable
+
+If anything fails during these tests, I'll fix it in this round.
+
+Let me start fresh:
+
+<ssh server="app" user="engineer" reason="Recon: check if repo exists, confirm current state.">
+ls -la ~/ci-cd-blocker 2>/dev/null | head -5 || echo "repo not yet cloned"
+</ssh>
+
+<ssh server="app" user="engineer" reason="Fresh clone if needed, then pull latest.">
+cd ~/ci-cd-blocker 2>/dev/null || git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker
+cd ~/ci-cd-blocker && git pull
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify TypeScript compiles cleanly.">
+cd ~/ci-cd-blocker && npm ci && npm run build 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Stop any existing container, then rebuild and start fresh.">
+cd ~/ci-cd-blocker && docker compose down 2>&1 ; docker compose build --no-cache 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Start the app and wait for startup.">
+cd ~/ci-cd-blocker && docker compose up -d && sleep 3 && docker compose ps
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check logs for startup errors or warnings.">
+docker compose logs app 2>&1 | tail -40
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test health endpoint to confirm app is listening.">
+curl -s http://localhost:3000/health 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="POST a realistic GitHub PR webhook payload.">
+curl -X POST http://localhost:3000/webhook \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "sha": "abc123def456",
+        "ref": "feature/test"
+      },
+      "base": {
+        "sha": "main123main123",
+        "ref": "main",
+        "repo": {
+          "name": "test-repo",
+          "owner": {
+            "login": "testowner"
+          },
+          "full_name": "testowner/test-repo"
+        }
+      }
+    }
+  }' 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Fetch recorded decisions for the test repo.">
+curl -s http://localhost:3000/api/audit/testowner/test-repo 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Verify app is still running and no zombie processes.">
+docker compose ps && docker compose logs app 2>&1 | tail -10
+</ssh>
+
+---
+
+**Why this sequence matters:**
+
+1. **Recon first** — I don't assume the server is in any state. Fresh start or pull?
+2. **Compile check** — TypeScript errors surface before Docker tries to run.
+3. **Docker rebuild** — Clean slate, catch any image layer issues.
+4. **Health endpoint** — Confirms Express listener is up before I send real payloads.
+5. **Webhook POST** — This is the core of the product. If it crashes, logs will show why.
+6. **Audit GET** — Confirms decisions were written and retrieved (or not, which tells me where the failure is).
+7. **Final health** — Ensure the app didn't become a zombie after the webhook POST.
+
+If any of these fails, I will:
+- Read the error output from logs
+- Identify the file(s) responsible
+- Fix them by writing the corrected file in THIS response (not guessing, using actual error messages)
+- Re-propose test
+
+I'm not going to describe what *should* work. I'm going to see what *actually* works, and fix what doesn't.
+
+---
+
+## Week 2 notes
+
+- **Focus this round:** End-to-end runtime validation, not code review. Previous round compiled; now testing if the running app actually handles a webhook without crashing.
+
+- **Tech decision:** Health endpoint returns `{ "status": "ok" }` immediately, no dependency checks. Webhook handler is synchronous (orchestrateTests() is awaited, but no timeout guard yet — acceptable for MVP).
+
+- **Assumption:** Decisions stored in-memory. If app restarts, all prior records disappear. This is fine for a single-engineer test run. Persistence comes after first paying customer.
+
+- **Still TODO after this round:**
+  - Confirm webhook POST completes without app crash
+  - Verify audit endpoint returns the decision that was just recorded
+  - Check logs for any import errors, undefined functions, or type mismatches at runtime
+  - If tests pass: move to Slack notification integration and manual override endpoint
+
+- **Tech debt:** In-memory storage. No request validation on webhook (will accept any JSON shape). No retry logic on test runner. All acceptable for MVP.
+
+- **Status:** On track if all SSH commands exit 0. Behind if Docker fails to start or app crashes on webhook POST.
+
+---
+
+PROGRESS:
+- Round: 18
+- Scope completion (this role for THIS week): 70%
+- Remaining for this role:
+  - Confirm app starts and health endpoint returns 200
+  - Verify webhook POST triggers orchestration and records decision (no crash)
+  - Confirm audit GET returns the recorded decision
+  - Fix any runtime errors revealed by logs
+  - (Stretch) test manual override endpoint if time allows
 - Recommendation: keep_working
