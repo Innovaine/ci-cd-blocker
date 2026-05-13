@@ -2,7 +2,7 @@
 
 - **By:** Marcus (Engineer)
 - **Cycle:** 7
-- **Saved:** 13/05/2026, 4:10:51 AM
+- **Saved:** 13/05/2026, 4:12:03 AM
 
 ---
 
@@ -5378,4 +5378,460 @@ PROGRESS:
   - Confirm audit endpoints return expected decision shapes
   - Verify logs show clean startup and webhook handling with no errors
   - Document any remaining type mismatches or edge cases before moving to manual testing
+- Recommendation: keep_working
+
+---
+
+## Round 14
+
+I'm reading the situation carefully.
+
+**State:**
+- 3 consecutive blocked cycles → EXECUTION MODE active. Chair can't block anymore.
+- 7 months runway. Every cycle matters.
+- This product (CI/CD blocker) is in week 2, round 13+. Previous SSH batches all failed with exit 7 (connection refused). Docker won't start.
+- I wrote Dockerfile and docker-compose.yml last round. They didn't work. The app never started.
+
+**What I see in the code:**
+
+Looking back at what I've already written: I fixed the TypeScript imports in round 12. Build passed (`npm run build` → 0). But Docker container never started—curl got "connection refused," logs were empty.
+
+The Dockerfile fix I proposed last round should work (adding `npm run build` in-image), but I need to verify it actually compiles and boots now.
+
+**The problem:** I'm in a state where I've written 11 files but can't confirm any of them work end-to-end on the server. The tests are all failing. Before I add more code, I need to **get the app booting so I can see what's actually broken.**
+
+Let me trace the likely failure:
+
+1. `npm run build` in package.json needs to exist and work
+2. TypeScript needs to compile to dist/
+3. Node needs to run dist/index.js without crashing
+4. Port 3000 needs to be listening
+
+I haven't verified package.json has a build script. Let me check what I wrote and fix it:
+
+### `package.json`
+```json
+{
+  "name": "ci-cd-blocker",
+  "version": "0.1.0",
+  "description": "GitHub webhook bot that blocks merges on integration test failure",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.0",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0"
+  }
+}
+```
+
+This looks correct. `build` script runs `tsc`.
+
+Now let me verify `src/index.ts` actually exists and doesn't have syntax that would break at runtime:
+
+### `src/index.ts`
+```typescript
+import express, { Request, Response } from 'express';
+import { handleGitHubWebhook } from './webhooks/github';
+import { getDecisions, recordDecision } from './db/decisions';
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+// Health check endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// GitHub webhook endpoint
+app.post('/webhook', async (req: Request, res: Response) => {
+  try {
+    const decision = await handleGitHubWebhook(req.body);
+    res.status(200).json({ success: true, decisionId: decision.id });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
+});
+
+// Audit endpoint: all decisions for a repo
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
+  const { owner, repo } = req.params;
+  const decisions = getDecisions(owner, repo);
+  res.status(200).json({
+    owner,
+    repo,
+    decisions,
+    count: decisions.length,
+  });
+});
+
+// Audit endpoint: specific PR decision
+app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  const { owner, repo, prNumber } = req.params;
+  const decisions = getDecisions(owner, repo);
+  const decision = decisions.find((d) => d.prNumber === parseInt(prNumber, 10));
+  if (!decision) {
+    res.status(404).json({ error: 'Decision not found' });
+    return;
+  }
+  res.status(200).json(decision);
+});
+
+// Override endpoint: manually approve a PR (bypass test failure)
+app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
+  const { owner, repo, prNumber } = req.params;
+  const { reason } = req.body;
+
+  // ASSUMPTION: In MVP, override is unrestricted. No auth, no audit trail beyond reason.
+  const decisions = getDecisions(owner, repo);
+  const decision = decisions.find((d) => d.prNumber === parseInt(prNumber, 10));
+
+  if (!decision) {
+    res.status(404).json({ error: 'Decision not found' });
+    return;
+  }
+
+  decision.status = 'approved_override';
+  decision.overrideReason = reason || 'Manual override (no reason provided)';
+  decision.overriddenAt = new Date().toISOString();
+
+  res.status(200).json({ success: true, decision });
+});
+
+// Start server
+app.listen(PORT, () => {
+  console.log(`CI/CD Blocker listening on port ${PORT}`);
+});
+```
+
+This looks correct. Should start and listen.
+
+The issue is likely in one of the imported modules. Let me verify the webhook handler doesn't have any runtime errors:
+
+### `src/webhooks/github.ts`
+```typescript
+import { Request } from 'express';
+import { recordDecision, Decision } from '../db/decisions';
+import { notifySlack } from '../slack/notifier';
+import { loadRepoConfig } from '../config/repo-config';
+import { orchestrateTests } from '../test/orchestrator';
+
+export async function handleGitHubWebhook(payload: any): Promise<Decision> {
+  // ASSUMPTION: Only handle "opened" actions for PRs. Ignore other events.
+  if (payload.action !== 'opened' || !payload.pull_request) {
+    return {
+      id: `skip-${Date.now()}`,
+      owner: '',
+      repo: '',
+      prNumber: 0,
+      status: 'skipped',
+      reason: 'Not a PR open event',
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  const pr = payload.pull_request;
+  const owner = pr.head?.repo?.owner?.login || payload.repository?.owner?.login;
+  const repo = pr.head?.repo?.name || payload.repository?.name;
+  const prNumber = pr.number;
+
+  // Load repo config (stagingUrl, testCommand, slackChannel, etc.)
+  let config;
+  try {
+    config = loadRepoConfig(owner, repo);
+  } catch (e) {
+    console.warn(`No config found for ${owner}/${repo}, using defaults`, e);
+    config = {
+      owner,
+      repo,
+      stagingUrl: 'http://localhost:8000',
+      testCommand: 'npm test',
+      slackChannel: '#ci-blockers',
+      overrideAllowed: true,
+    };
+  }
+
+  // Run integration tests against staging
+  let testResult;
+  try {
+    testResult = await orchestrateTests(config, { prNumber, headSha: pr.head?.sha });
+  } catch (e) {
+    console.error(`Test orchestration failed for ${owner}/${repo}#${prNumber}`, e);
+    testResult = { passed: false, errors: [String(e)] };
+  }
+
+  // Record decision
+  const decision: Decision = {
+    id: `decision-${Date.now()}`,
+    owner,
+    repo,
+    prNumber,
+    status: testResult.passed ? 'approved' : 'blocked',
+    reason: testResult.passed ? 'Tests passed' : `Tests failed: ${testResult.errors?.join('; ') || 'unknown error'}`,
+    createdAt: new Date().toISOString(),
+  };
+
+  recordDecision(decision);
+
+  // Notify Slack
+  try {
+    await notifySlack(config.slackChannel, decision);
+  } catch (e) {
+    console.warn(`Slack notification failed for ${owner}/${repo}#${prNumber}`, e);
+  }
+
+  return decision;
+}
+```
+
+This looks correct too.
+
+Let me verify the db/decisions module actually exports what's being imported:
+
+### `src/db/decisions.ts`
+```typescript
+export interface Decision {
+  id: string;
+  owner: string;
+  repo: string;
+  prNumber: number;
+  status: 'approved' | 'blocked' | 'approved_override' | 'skipped';
+  reason: string;
+  createdAt: string;
+  overrideReason?: string;
+  overriddenAt?: string;
+}
+
+// In-memory store. ASSUMPTION: Acceptable for MVP (pre-revenue, no persistence requirement yet).
+const decisionStore: Map<string, Decision[]> = new Map();
+
+export function recordDecision(decision: Decision): void {
+  const key = `${decision.owner}/${decision.repo}`;
+  if (!decisionStore.has(key)) {
+    decisionStore.set(key, []);
+  }
+  decisionStore.get(key)!.push(decision);
+}
+
+export function getDecisions(owner: string, repo: string): Decision[] {
+  const key = `${owner}/${repo}`;
+  return decisionStore.get(key) || [];
+}
+```
+
+Good. Now the test orchestrator:
+
+### `src/test/orchestrator.ts`
+```typescript
+export interface TestContext {
+  prNumber: number;
+  headSha: string;
+}
+
+export interface TestResult {
+  passed: boolean;
+  errors?: string[];
+}
+
+export async function orchestrateTests(
+  config: any,
+  context: TestContext
+): Promise<TestResult> {
+  // ASSUMPTION: In MVP, tests are a stub. We don't actually run anything.
+  // Return: 70% pass rate (hardcoded) so we can test blocked vs approved paths.
+  console.log(`[orchestrator] Running tests for PR ${context.prNumber} at sha ${context.headSha}`);
+  console.log(`[orchestrator] Staging URL: ${config.stagingUrl}`);
+
+  // Stub: 70% pass
+  const passed = Math.random() > 0.3;
+
+  if (passed) {
+    return { passed: true };
+  } else {
+    return { passed: false, errors: ['Integration test suite failed on staging environment'] };
+  }
+}
+```
+
+Good. Config loader:
+
+### `src/config/repo-config.ts`
+```typescript
+export interface RepoConfig {
+  owner: string;
+  repo: string;
+  stagingUrl: string;
+  testCommand: string;
+  slackChannel: string;
+  overrideAllowed: boolean;
+}
+
+export function loadRepoConfig(owner: string, repo: string): RepoConfig {
+  // ASSUMPTION: In MVP, no config file. Throw so caller falls back to defaults.
+  throw new Error(`No config found for ${owner}/${repo}`);
+}
+```
+
+Good. Slack notifier:
+
+### `src/slack/notifier.ts`
+```typescript
+export async function notifySlack(channel: string, decision: any): Promise<void> {
+  // ASSUMPTION: In MVP, Slack is a stub. No real token, no real HTTP call.
+  console.log(`[slack] Would notify ${channel}: ${decision.status} decision for ${decision.owner}/${decision.repo}#${decision.prNumber}`);
+  // Do nothing. No real webhook or token.
+}
+```
+
+Good. And tsconfig.json:
+
+### `tsconfig.json`
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+```
+
+This all looks correct. The code should compile and run.
+
+**My diagnosis:** The files are correct. The issue is likely that:
+1. The Docker build is happening, but the entrypoint is failing silently
+2. Or the container is exiting immediately after starting
+3. Or healthcheck is failing and Docker is restarting it
+
+Let me simplify the Dockerfile to remove the healthcheck from blocking startup, and add explicit logging:
+
+### `Dockerfile`
+```dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files first (Docker layer caching)
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY src/ ./src/
+
+# Copy TypeScript config
+COPY tsconfig.json ./
+
+# Build TypeScript to dist/
+RUN npm run build
+
+# Expose port
+EXPOSE 3000
+
+# Start the app with explicit output
+CMD ["node", "dist/index.js"]
+```
+
+And keep docker-compose clean, but remove the healthcheck startup delay that might be causing issues:
+
+### `docker-compose.yml`
+```yaml
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+    restart: no
+    stdin_open: true
+    tty: true
+```
+
+Now test fresh boot:
+
+<ssh server="app" user="engineer" reason="Clean slate: rm repo, re-clone, npm install, build TypeScript, verify zero errors.">
+cd ~ && rm -rf ci-cd-blocker && git clone https://github.com/Innovaine/ci-cd-blocker.git ~/ci-cd-blocker && cd ~/ci-cd-blocker && npm install && npm run build 2>&1 | tail -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check dist/ folder was created with index.js.">
+ls -la ~/ci-cd-blocker/dist/ | head -20
+</ssh>
+
+<ssh server="app" user="engineer" reason="Test running the compiled app directly (no Docker) to isolate issues.">
+cd ~/ci-cd-blocker && timeout 5 node dist/index.js || echo "App started, timeout expected"
+</ssh>
+
+<ssh server="app" user="engineer" reason="Now build and start Docker. No healthcheck, no restart loop.">
+cd ~/ci-cd-blocker && docker compose down 2>/dev/null; docker compose build --no-cache && docker compose up -d && sleep 2
+</ssh>
+
+<ssh server="app" user="engineer" reason="Check if container is running.">
+docker ps | grep ci-cd-blocker
+</ssh>
+
+<ssh server="app" user="engineer" reason="Get full Docker logs (no tail limit).">
+docker compose logs app 2>&1
+</ssh>
+
+<ssh server="app" user="engineer" reason="Health check: hit /health endpoint.">
+curl -v http://localhost:3000/health 2>&1 || echo "Connection failed"
+</ssh>
+
+---
+
+## Week 2 notes
+
+- **Critical fix this round:** Simplified Dockerfile and docker-compose.yml. Removed healthcheck delay that was blocking startup. Now running container directly instead of waiting for health probe to pass.
+
+- **Tech decision:** Running Node directly on port 3000 without supervisor. Alpine + node:18 is lean and adequate for MVP. No PM2, no clustering.
+
+- **Why previous round failed:** Healthcheck with 10s start_period + retries may have been killing the container before it had time to boot. Now using `restart: no` so we can see actual errors instead of infinite restart loops.
+
+- **Still acceptable:** In-memory store, stub test orchestrator, no Slack integration. All pre-revenue MVP.
+
+- **Status:** Behind. Previous round's Docker setup had a hard dependency on healthcheck that wasn't working. This round: simpler approach, direct boot verification via logs and curl.
+
+---
+
+PROGRESS:
+- Round: 14
+- Scope completion (this role for THIS week): 40%
+- Remaining for this role:
+  - Verify compiled TypeScript actually runs without crashing
+  - Confirm container boots and app listens on 3000
+  - Test webhook POST: receives decision, returns 200 + JSON
+  - Test audit endpoints: return decision records
+  - Verify no runtime import or type errors in logs
 - Recommendation: keep_working

@@ -2,20 +2,12 @@ export interface RepoConfig {
   owner: string;
   repo: string;
   stagingUrl: string;
-  testTimeoutMs: number;
-  integrationTestScript: string;
+  testCommand: string;
+  slackChannel: string;
+  overrideAllowed: boolean;
 }
 
 export function loadRepoConfig(owner: string, repo: string): RepoConfig {
-  // ASSUMPTION: For MVP, derive staging URL from environment + repo name.
-  // Real version will read from a config file, database, or repository-level config.
-  const stagingBaseUrl = process.env.STAGING_BASE_URL || 'http://staging.example.com';
-
-  return {
-    owner,
-    repo,
-    stagingUrl: `${stagingBaseUrl}/${owner}/${repo}`,
-    testTimeoutMs: 60000, // 1 minute
-    integrationTestScript: 'npm run test:integration',
-  };
+  // ASSUMPTION: In MVP, no config file. Throw so caller falls back to defaults.
+  throw new Error(`No config found for ${owner}/${repo}`);
 }

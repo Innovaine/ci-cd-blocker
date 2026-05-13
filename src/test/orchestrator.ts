@@ -1,26 +1,28 @@
-import { RepoConfig } from '../config/repo-config';
-
-export interface TestResult {
-  testsPassed: boolean;
-  message: string;
+export interface TestContext {
+  prNumber: number;
+  headSha: string;
 }
 
-/**
- * Orchestrate integration test execution against staging environment.
- * ASSUMPTION (MVP): Always returns pass. Real version will:
- *   1. Deploy PR commit to staging
- *   2. Run integration test suite (npm run test:integration or similar)
- *   3. Report pass/fail based on exit code
- */
-export async function orchestrateTests(config: RepoConfig, prNumber: number): Promise<TestResult> {
-  console.log(
-    `[Orchestrator] Running tests for PR #${prNumber} against ${config.stagingUrl}`
-  );
+export interface TestResult {
+  passed: boolean;
+  errors?: string[];
+}
 
-  // ASSUMPTION: For MVP, tests always pass. No actual deployment or test execution.
-  // Real version: spawn child process, run npm run test:integration against deployed staging env, capture exit code.
-  return {
-    testsPassed: true,
-    message: 'Tests passed (stub)',
-  };
+export async function orchestrateTests(
+  config: any,
+  context: TestContext
+): Promise<TestResult> {
+  // ASSUMPTION: In MVP, tests are a stub. We don't actually run anything.
+  // Return: 70% pass rate (hardcoded) so we can test blocked vs approved paths.
+  console.log(`[orchestrator] Running tests for PR ${context.prNumber} at sha ${context.headSha}`);
+  console.log(`[orchestrator] Staging URL: ${config.stagingUrl}`);
+
+  // Stub: 70% pass
+  const passed = Math.random() > 0.3;
+
+  if (passed) {
+    return { passed: true };
+  } else {
+    return { passed: false, errors: ['Integration test suite failed on staging environment'] };
+  }
 }

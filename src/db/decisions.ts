@@ -1,39 +1,27 @@
-export interface DecisionRecord {
+export interface Decision {
+  id: string;
   owner: string;
   repo: string;
   prNumber: number;
-  testsPassed: boolean;
-  overridden: boolean;
+  status: 'approved' | 'blocked' | 'approved_override' | 'skipped';
+  reason: string;
+  createdAt: string;
   overrideReason?: string;
-  timestamp: number;
+  overriddenAt?: string;
 }
 
-const store: Map<string, DecisionRecord> = new Map();
+// In-memory store. ASSUMPTION: Acceptable for MVP (pre-revenue, no persistence requirement yet).
+const decisionStore: Map<string, Decision[]> = new Map();
 
-export function recordDecision(decisionId: string, decision: DecisionRecord): void {
-  store.set(decisionId, decision);
-  console.log(`[DB] Decision recorded: ${decisionId}`);
+export function recordDecision(decision: Decision): void {
+  const key = `${decision.owner}/${decision.repo}`;
+  if (!decisionStore.has(key)) {
+    decisionStore.set(key, []);
+  }
+  decisionStore.get(key)!.push(decision);
 }
 
-export function getDecisionForPR(
-  owner: string,
-  repo: string,
-  prNumber: number
-): DecisionRecord | undefined {
-  const decisionId = `${owner}/${repo}#${prNumber}`;
-  return store.get(decisionId);
-}
-
-export function getRecentDecisions(owner: string, repo: string): DecisionRecord[] {
-  const repoPrefix = `${owner}/${repo}#`;
-  const results: DecisionRecord[] = [];
-
-  store.forEach((decision, decisionId) => {
-    if (decisionId.startsWith(repoPrefix)) {
-      results.push(decision);
-    }
-  });
-
-  // Sort by timestamp descending (most recent first).
-  return results.sort((a, b) => b.timestamp - a.timestamp);
+export function getDecisions(owner: string, repo: string): Decision[] {
+  const key = `${owner}/${repo}`;
+  return decisionStore.get(key) || [];
 }

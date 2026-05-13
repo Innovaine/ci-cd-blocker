@@ -2902,3 +2902,81 @@ ERROR: command exited 7
 docker compose logs app --tail=50
 ```
 ERROR: command exited 1
+
+## 2026-05-13T01:11:14.795Z — Marcus ran 6 command(s)
+_Pre-SSH: warehouse pushed to GitHub as commit `8f31fcc` so the server's `git pull` will pick it up._
+
+### Command 1 on app as engineer (✗ exit 1, 2868ms)
+```
+cd ~/ci-cd-blocker && git pull && docker compose down && docker compose build --no-cache && docker compose up -d && sleep 5 && curl -s http://localhost:3000/health && echo ""
+```
+STDOUT:
+```
+Updating a5ecf54..8f31fcc
+Fast-forward
+ docker-compose.yml     |  21 +++----
+ server-log.md          |  90 ++++++++++++++++++++++++++++
+ week-02/engineering.md | 155 ++++++++++++++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 255 insertions(+), 11 deletions(-)
+#1 [internal] load local bake definitions
+#1 reading from stdin 532B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2B done
+#2 DONE 0.0s
+```
+ERROR: command exited 1
+
+### Command 2 on app as engineer (✗ exit 1, 502ms)
+```
+docker compose logs app --tail=100
+```
+ERROR: command exited 1
+
+### Command 3 on app as engineer (✗ exit 7, 433ms)
+```
+curl -s -X POST http://localhost:3000/webhook \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "action": "opened",
+    "pull_request": {
+      "number": 42,
+      "head": {
+        "repo": {
+          "owner": {
+            "login": "acme-corp"
+          },
+          "name": "api-service"
+        }
+      }
+    },
+    "repository": {
+      "owner": {
+        "login": "acme-corp"
+      },
+      "name": "api-service"
+    }
+  }' && echo ""
+```
+ERROR: command exited 7
+
+### Command 4 on app as engineer (✗ exit 7, 460ms)
+```
+curl -s http://localhost:3000/api/audit/acme-corp/api-service && echo ""
+```
+ERROR: command exited 7
+
+### Command 5 on app as engineer (✗ exit 7, 447ms)
+```
+curl -s http://localhost:3000/api/audit/acme-corp/api-service/42 && echo ""
+```
+ERROR: command exited 7
+
+### Command 6 on app as engineer (✗ exit 7, 443ms)
+```
+curl -s -X POST http://localhost:3000/api/override/acme-corp/api-service/42 \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"Emergency hotfix, tests deferred"}' && echo ""
+```
+ERROR: command exited 7

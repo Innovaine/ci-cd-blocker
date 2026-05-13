@@ -1,95 +1,72 @@
-import { Request, Response } from 'express';
-import { RepoConfig, loadRepoConfig } from '../config/repo-config';
-import { orchestrateTests } from '../test/orchestrator';
-import { recordDecision } from '../db/decisions';
+import { Request } from 'express';
+import { recordDecision, Decision } from '../db/decisions';
 import { notifySlack } from '../slack/notifier';
+import { loadRepoConfig } from '../config/repo-config';
+import { orchestrateTests } from '../test/orchestrator';
 
-export interface WebhookPayload {
-  action: string;
-  pull_request?: {
-    number: number;
-    head?: {
-      repo?: {
-        owner?: { login: string };
-        name?: string;
-      };
+export async function handleGitHubWebhook(payload: any): Promise<Decision> {
+  // ASSUMPTION: Only handle "opened" actions for PRs. Ignore other events.
+  if (payload.action !== 'opened' || !payload.pull_request) {
+    return {
+      id: `skip-${Date.now()}`,
+      owner: '',
+      repo: '',
+      prNumber: 0,
+      status: 'skipped',
+      reason: 'Not a PR open event',
+      createdAt: new Date().toISOString(),
     };
-  };
-  repository?: {
-    owner?: { login: string };
-    name?: string;
-  };
-}
-
-export interface WebhookResult {
-  received: boolean;
-  decisionId?: string;
-  error?: string;
-}
-
-export async function handleGitHubWebhook(req: Request, res: Response): Promise<void> {
-  const payload: WebhookPayload = req.body;
-
-  // Extract owner and repo
-  const owner =
-    payload.pull_request?.head?.repo?.owner?.login || payload.repository?.owner?.login;
-  const repo = payload.pull_request?.head?.repo?.name || payload.repository?.name;
-  const prNumber = payload.pull_request?.number;
-
-  if (!owner || !repo || !prNumber) {
-    const result: WebhookResult = {
-      received: false,
-      error: 'Missing owner, repo, or PR number in payload',
-    };
-    res.status(400).json(result);
-    return;
   }
 
-  console.log(
-    `[GitHub] Webhook received for ${owner}/${repo} PR #${prNumber}, action=${payload.action}`
-  );
+  const pr = payload.pull_request;
+  const owner = pr.head?.repo?.owner?.login || payload.repository?.owner?.login;
+  const repo = pr.head?.repo?.name || payload.repository?.name;
+  const prNumber = pr.number;
 
-  // Load repo config
-  const config = loadRepoConfig(owner, repo);
+  // Load repo config (stagingUrl, testCommand, slackChannel, etc.)
+  let config;
+  try {
+    config = loadRepoConfig(owner, repo);
+  } catch (e) {
+    console.warn(`No config found for ${owner}/${repo}, using defaults`, e);
+    config = {
+      owner,
+      repo,
+      stagingUrl: 'http://localhost:8000',
+      testCommand: 'npm test',
+      slackChannel: '#ci-blockers',
+      overrideAllowed: true,
+    };
+  }
 
-  // Run orchestrator (test execution)
+  // Run integration tests against staging
   let testResult;
   try {
-    testResult = await orchestrateTests(config, prNumber);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[Orchestrator] Failed for PR #${prNumber}:`, message);
-    const result: WebhookResult = {
-      received: false,
-      error: `Test orchestration failed: ${message}`,
-    };
-    res.status(500).json(result);
-    return;
+    testResult = await orchestrateTests(config, { prNumber, headSha: pr.head?.sha });
+  } catch (e) {
+    console.error(`Test orchestration failed for ${owner}/${repo}#${prNumber}`, e);
+    testResult = { passed: false, errors: [String(e)] };
   }
 
-  // Build decision record
-  const decisionId = `${owner}/${repo}#${prNumber}`;
-  const decision = {
+  // Record decision
+  const decision: Decision = {
+    id: `decision-${Date.now()}`,
     owner,
     repo,
     prNumber,
-    testsPassed: testResult.testsPassed,
-    overridden: false,
-    timestamp: Date.now(),
+    status: testResult.passed ? 'approved' : 'blocked',
+    reason: testResult.passed ? 'Tests passed' : `Tests failed: ${testResult.errors?.join('; ') || 'unknown error'}`,
+    createdAt: new Date().toISOString(),
   };
 
-  // Record decision
-  recordDecision(decisionId, decision);
+  recordDecision(decision);
 
-  // Notify Slack (fire-and-forget; do not block webhook response)
-  notifySlack(decision).catch((err) => {
-    console.error(`[Slack] Error notifying (non-blocking):`, err);
-  });
+  // Notify Slack
+  try {
+    await notifySlack(config.slackChannel, decision);
+  } catch (e) {
+    console.warn(`Slack notification failed for ${owner}/${repo}#${prNumber}`, e);
+  }
 
-  // Return success
-  const result: WebhookResult = {
-    received: true,
-    decisionId,
-  };
-  res.status(200).json(result);
+  return decision;
 }

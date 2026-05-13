@@ -8,12 +8,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
+      NODE_ENV: development
       PORT: 3000
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
-      interval: 5s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
+    restart: no
+    stdin_open: true
+    tty: true

@@ -1,91 +1,74 @@
 import express, { Request, Response } from 'express';
 import { handleGitHubWebhook } from './webhooks/github';
-import { getDecisionForPR, getRecentDecisions } from './db/decisions';
+import { getDecisions, recordDecision } from './db/decisions';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Health check
-app.get('/health', (req: Request, res: Response): void => {
-  res.status(200).json({ status: 'ok' });
+// Health check endpoint
+app.get('/health', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// GitHub webhook receiver
-app.post('/webhook', async (req: Request, res: Response): Promise<void> => {
-  await handleGitHubWebhook(req, res);
+// GitHub webhook endpoint
+app.post('/webhook', async (req: Request, res: Response) => {
+  try {
+    const decision = await handleGitHubWebhook(req.body);
+    res.status(200).json({ success: true, decisionId: decision.id });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ success: false, error: String(error) });
+  }
 });
 
-// Audit: all decisions for a repo
-app.get('/api/audit/:owner/:repo', (req: Request, res: Response): void => {
+// Audit endpoint: all decisions for a repo
+app.get('/api/audit/:owner/:repo', (req: Request, res: Response) => {
   const { owner, repo } = req.params;
-  const decisions = getRecentDecisions(owner, repo);
+  const decisions = getDecisions(owner, repo);
   res.status(200).json({
     owner,
     repo,
     decisions,
+    count: decisions.length,
   });
 });
 
-// Audit: decision for a specific PR
-app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response): void => {
+// Audit endpoint: specific PR decision
+app.get('/api/audit/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   const { owner, repo, prNumber } = req.params;
-  const prNum = parseInt(prNumber, 10);
-
-  if (isNaN(prNum)) {
-    res.status(400).json({ error: 'Invalid PR number' });
-    return;
-  }
-
-  const decision = getDecisionForPR(owner, repo, prNum);
-
+  const decisions = getDecisions(owner, repo);
+  const decision = decisions.find((d) => d.prNumber === parseInt(prNumber, 10));
   if (!decision) {
     res.status(404).json({ error: 'Decision not found' });
     return;
   }
-
   res.status(200).json(decision);
 });
 
-// Override: manually approve a PR
-app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response): void => {
+// Override endpoint: manually approve a PR (bypass test failure)
+app.post('/api/override/:owner/:repo/:prNumber', (req: Request, res: Response) => {
   const { owner, repo, prNumber } = req.params;
   const { reason } = req.body;
-  const prNum = parseInt(prNumber, 10);
 
-  if (isNaN(prNum)) {
-    res.status(400).json({ error: 'Invalid PR number' });
-    return;
-  }
-
-  if (!reason) {
-    res.status(400).json({ error: 'Override reason required' });
-    return;
-  }
-
-  console.log(`[Override] PR #${prNum} in ${owner}/${repo} overridden: ${reason}`);
-
-  // Update decision: mark as overridden
-  const decisionId = `${owner}/${repo}#${prNum}`;
-  const decision = getDecisionForPR(owner, repo, prNum);
+  // ASSUMPTION: In MVP, override is unrestricted. No auth, no audit trail beyond reason.
+  const decisions = getDecisions(owner, repo);
+  const decision = decisions.find((d) => d.prNumber === parseInt(prNumber, 10));
 
   if (!decision) {
     res.status(404).json({ error: 'Decision not found' });
     return;
   }
 
-  decision.overridden = true;
-  decision.overrideReason = reason;
+  decision.status = 'approved_override';
+  decision.overrideReason = reason || 'Manual override (no reason provided)';
+  decision.overriddenAt = new Date().toISOString();
 
-  res.status(200).json({
-    message: 'Override recorded',
-    decisionId,
-    decision,
-  });
+  res.status(200).json({ success: true, decision });
 });
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`[Server] CI/CD Blocker listening on port ${PORT}`);
+  console.log(`CI/CD Blocker listening on port ${PORT}`);
 });
